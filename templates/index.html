@@ -1,0 +1,1141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Purchase Price Analyzer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="{{ url_for('static', path='/js/theme-init.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}">
+</head>
+<body>
+    <section class="access-shell" id="accessShell">
+        <div class="access-card">
+            <div class="panel-label">Secure Access</div>
+            <h1 class="access-title">Enter Access Code</h1>
+            <p class="access-copy">Use a valid access code to unlock the Purchase Price Analyzer dashboard.</p>
+            <form id="accessCodeForm" class="access-form">
+                <label for="accessCodeInput" class="access-label">Access Code</label>
+                <input id="accessCodeInput" name="code" class="access-input" type="text" autocomplete="off" placeholder="Enter your access code" maxlength="12" required>
+                <p class="access-helper">You received your access code after purchase</p>
+                <button type="button" class="action-btn access-submit" id="accessSubmitButton">Unlock Dashboard</button>
+                <div class="error-box access-error" id="accessCodeError" hidden>Invalid access code. Please try again.</div>
+            </form>
+        </div>
+    </section>
+
+    <div class="container app-shell app-shell-locked" id="appShell" hidden>
+        <header class="page-header">
+            <div class="brand-lockup">
+                <div class="brand-kicker">Purchase Price Analyzer</div>
+                <p class="brand-title">Premium pricing review for procurement teams</p>
+            </div>
+            <div class="header-actions">
+                <button id="guidePanelToggle" class="secondary-btn workspace-toggle-btn" type="button" hidden>Guide</button>
+                <button id="notesPanelToggle" class="secondary-btn workspace-toggle-btn" type="button" hidden>Notes</button>
+                <button id="themeToggle" class="secondary-btn theme-toggle" type="button" aria-label="Toggle theme">Dark Mode</button>
+                <button id="logoutButton" class="secondary-btn" type="button" hidden>Log Out</button>
+            </div>
+        </header>
+
+        <nav class="app-view-nav" aria-label="Primary workspace">
+            <a class="app-view-tab {% if active_view == 'analyzer' %}is-active{% endif %}" href="/" aria-current="{% if active_view == 'analyzer' %}page{% else %}false{% endif %}">Analyzer</a>
+            <a class="app-view-tab {% if active_view == 'recipes' %}is-active{% endif %}" href="/recipes" aria-current="{% if active_view == 'recipes' %}page{% else %}false{% endif %}">Recipes</a>
+            <a class="app-view-tab {% if active_view == 'quote_compare' %}is-active{% endif %}" href="/quote-compare" aria-current="{% if active_view == 'quote_compare' %}page{% else %}false{% endif %}">Quote Compare</a>
+        </nav>
+
+        <aside class="side-panel side-panel-left" id="guidePanel" hidden aria-hidden="true">
+            <div class="side-panel-card">
+                <div class="side-panel-head">
+                    <div>
+                        <div class="side-panel-kicker">Workspace Guide</div>
+                        <h2 class="side-panel-title">Helpful reminders</h2>
+                    </div>
+                    <button type="button" class="side-panel-close" id="closeGuidePanelButton" aria-label="Close guide panel">Close</button>
+                </div>
+                <div class="side-panel-body">
+                    <div class="side-panel-section-label">Checklist</div>
+                    <ul class="side-panel-checklist">
+                        <li>Upload your file</li>
+                        <li>Check overpay rows</li>
+                        <li>Compare suppliers</li>
+                        <li>Review savings opportunities</li>
+                    </ul>
+                    <div class="side-panel-section-label">Tips</div>
+                    <div class="side-panel-tip-list">
+                        <p>Use filters only after you review the top insights once.</p>
+                        <p>Collapse sections you are not using to keep the workspace focused.</p>
+                        <p>Open Ask Your Data after analysis when you want an executive summary.</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <aside class="side-panel side-panel-right" id="notesPanel" hidden aria-hidden="true">
+            <div class="side-panel-card">
+                <div class="side-panel-head">
+                    <div>
+                        <div class="side-panel-kicker">Workspace Notes</div>
+                        <h2 class="side-panel-title">Capture findings</h2>
+                    </div>
+                    <button type="button" class="side-panel-close" id="closeNotesPanelButton" aria-label="Close notes panel">Close</button>
+                </div>
+                <div class="side-panel-body">
+                    <label class="notes-label" for="notesTextarea">Notes</label>
+                    <textarea id="notesTextarea" class="notes-textarea" placeholder="Capture takeaways, supplier risks, renegotiation ideas, or savings actions..."></textarea>
+                    <div class="notes-footer">
+                        <span class="notes-saved-indicator" id="notesSavedIndicator">Saved</span>
+                        <button type="button" class="secondary-btn notes-clear-btn" id="clearNotesButton">Clear</button>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        {% if active_view == 'analyzer' %}
+        <div id="mainDashboardView" data-has-analysis="{{ 'true' if rows else 'false' }}">
+        <section class="collapsible-panel collapsible-panel-hero is-expanded" id="guidedEntryPanel" data-collapsible data-storage-key="guidedEntryCollapsed">
+            <button type="button" class="collapsible-toggle collapsible-toggle-hero" data-collapsible-toggle aria-expanded="true" aria-controls="guidedEntryBody">
+                <span class="collapsible-toggle-copy">
+                    <span class="collapsible-step-badge">Step 1</span>
+                    <span class="collapsible-toggle-kicker">Guided Entry</span>
+                    <span class="collapsible-toggle-title">What this tool does and how to use it</span>
+                </span>
+                <span class="collapsible-toggle-icon" aria-hidden="true"></span>
+            </button>
+            <div class="collapsible-body" id="guidedEntryBody" data-collapsible-body>
+                <div class="collapsible-body-inner">
+                    <section class="hero hero-compact">
+                        <div class="hero-main hero-main-compact">
+                            <div class="eyebrow">Guided Entry</div>
+                            <div class="hero-compact-head">
+                                <div>
+                                    <h1>Spot margin leakage and supplier leverage fast.</h1>
+                                    <p>Use the analyzer to upload purchasing history, identify overpay, and move from signals to actions without digging through raw rows first.</p>
+                                </div>
+                                <div class="hero-cta-shell">
+                                    <button type="button" class="action-btn hero-cta-btn" id="goToAnalysisButton">Go to Step 2</button>
+                                </div>
+                            </div>
+
+                            <div class="hero-steps hero-steps-compact" aria-label="How the analyzer works">
+                                <article class="hero-step">
+                                    <div class="hero-step-index">01</div>
+                                    <div class="hero-step-content">
+                                        <h2 class="hero-step-title">Upload</h2>
+                                        <p class="hero-step-copy">Bring in CSV or Excel purchasing data.</p>
+                                    </div>
+                                </article>
+                                <article class="hero-step">
+                                    <div class="hero-step-index">02</div>
+                                    <div class="hero-step-content">
+                                        <h2 class="hero-step-title">Analyze</h2>
+                                        <p class="hero-step-copy">Surface overpay, supplier risk, and savings signals.</p>
+                                    </div>
+                                </article>
+                                <article class="hero-step">
+                                    <div class="hero-step-index">03</div>
+                                    <div class="hero-step-content">
+                                        <h2 class="hero-step-title">Decide</h2>
+                                        <p class="hero-step-copy">Review executive insights, evidence, and next actions.</p>
+                                    </div>
+                                </article>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </section>
+
+        <section class="collapsible-panel collapsible-panel-upload is-expanded" id="uploadPanel" data-collapsible data-storage-key="uploadAnalyzeCollapsed">
+            <button type="button" class="collapsible-toggle" data-collapsible-toggle aria-expanded="true" aria-controls="uploadPanelBody">
+                <span class="collapsible-toggle-copy">
+                    <span class="collapsible-step-badge">Step 2</span>
+                    <span class="collapsible-toggle-kicker">Upload & Analyze</span>
+                    <span class="collapsible-toggle-title">Add a purchasing file, explore demo data, or continue a saved analysis</span>
+                </span>
+                <span class="collapsible-toggle-icon" aria-hidden="true"></span>
+            </button>
+            <div class="collapsible-body" id="uploadPanelBody" data-collapsible-body>
+                <div class="collapsible-body-inner">
+                    <section class="upload-box" id="uploadBox">
+                        <div class="upload-header">
+                            <div>
+                                <h2 class="upload-title">Analyze a purchasing file</h2>
+                                <p class="upload-subtitle">Drop in a file to surface overpay, savings potential, and supplier leverage in one decision-ready view. If you want to explore first, launch the demo instantly.</p>
+                            </div>
+                            {% if persisted_analysis %}
+                                <form action="/clear" method="post" class="clear-analysis-form">
+                                    <button type="submit" class="secondary-btn" id="clearAnalysisButton">Clear Analysis</button>
+                                </form>
+                            {% endif %}
+                        </div>
+
+                        <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+                            <div class="upload-flow">
+                                <div class="upload-step">Step 1: Upload</div>
+                                <label for="file-upload" class="upload-dropzone" id="uploadDropzone">
+                                    <span class="upload-dropzone-kicker" id="uploadDropzoneKicker">Drag and drop your file here</span>
+                                    <span class="upload-dropzone-title">Upload CSV, XLSX, or XLS</span>
+                                    <span class="upload-dropzone-copy">Choose a purchasing file to detect overpay, recover savings, and compare supplier pricing in minutes.</span>
+                                    <span class="custom-file-label">Choose File</span>
+                                </label>
+                                <input id="file-upload" type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                                <div class="upload-row">
+                                    <span id="file-name">No file selected yet</span>
+                                    <button type="submit" class="action-btn upload-submit" formaction="/upload" formmethod="post" formenctype="multipart/form-data">Review Columns</button>
+                                </div>
+                            </div>
+                        </form>
+
+                        <section class="mapping-review-panel" id="mappingReviewPanel" hidden>
+                            <div class="mapping-review-head">
+                                <div>
+                                    <div class="upload-step">Step 2: Review Mappings</div>
+                                    <h3 class="mapping-review-title">Review your column matches</h3>
+                                    <p class="mapping-review-copy" id="mappingReviewIntro">We detected likely matches from your file headers. Review and confirm the fields below before analysis.</p>
+                                </div>
+                                <div class="mapping-summary-chips" id="mappingSummaryChips"></div>
+                            </div>
+                            <div class="mapping-review-note">
+                                Your file can contain extra columns. We only use the mapped fields required for analysis. If a field was matched incorrectly, choose the correct column before continuing.
+                            </div>
+                            <div class="mapping-grid" id="mappingGrid"></div>
+                            <div class="mapping-alert mapping-alert-error" id="mappingMissingAlert" hidden></div>
+                            <div class="mapping-alert mapping-alert-info" id="mappingOptionalAlert" hidden></div>
+                            <div class="mapping-actions">
+                                <button type="button" class="secondary-btn" id="changeUploadFileButton">Choose Different File</button>
+                                <button type="button" class="action-btn" id="confirmMappingButton">Confirm & Analyze</button>
+                            </div>
+                        </section>
+
+                        <div class="upload-secondary-flow">
+                            <form action="/demo-data" method="post" class="demo-form">
+                                <div class="upload-step">Step 2: Explore instantly</div>
+                                <div class="demo-cta-shell">
+                                    <div>
+                                        <div class="demo-cta-title">Try Demo Data</div>
+                                        <div class="demo-cta-copy">Load a ready-made purchasing file and explore the full dashboard before uploading anything.</div>
+                                    </div>
+                                    <div class="demo-cta-actions">
+                                        <button type="submit" class="secondary-btn demo-btn">Try Demo Data</button>
+                                        <span class="demo-note">No setup required</span>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="sample-links">
+                            <span class="sample-links-label">Need a template?</span>
+                            <a href="/download-sample-csv" class="sample-link">Download sample CSV</a>
+                            <a href="/download-sample-excel" class="sample-link">Download sample Excel</a>
+                        </div>
+
+                        <div class="upload-meta">
+                            <div class="meta-item">
+                                <div class="meta-label">Supported Formats</div>
+                                <div class="meta-value">CSV, XLSX, and XLS files are supported.</div>
+                            </div>
+                            <div class="meta-item">
+                                <div class="meta-label">Required Fields</div>
+                                <div class="meta-value">We auto-detect Product Name, Supplier, Unit, Quantity, Unit Price, and Date from your file headers.</div>
+                            </div>
+                            <div class="meta-item">
+                                <div class="meta-label">Output</div>
+                                <div class="meta-value">Review a live filtered dashboard, then export the analyzed results in CSV or Excel.</div>
+                            </div>
+                        </div>
+
+                        {% if error %}
+                            <div class="error-box">{{ error }}</div>
+                        {% endif %}
+                        <div class="error-box" id="uploadError" hidden></div>
+
+                        <div id="uploadStatusHost">
+                            {% if filename and not demo_mode %}
+                                <div class="success-text upload-success-row">
+                                    <span>Analysis ready for {{ filename }}</span>
+                                    <button type="button" class="secondary-btn upload-success-action" id="replaceFileButton">Replace File</button>
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        {% if persisted_analysis %}
+                            <div class="demo-badge">Viewing previous analysis</div>
+                        {% endif %}
+
+                        {% if demo_mode %}
+                            <div class="demo-badge">Viewing demo dataset</div>
+                        {% endif %}
+                    </section>
+                </div>
+            </div>
+        </section>
+
+        <section class="collapsible-panel collapsible-panel-inline collapsible-panel-summary is-expanded" id="topInsightsPanel" data-collapsible data-storage-key="topInsightsCollapsed">
+            <button type="button" class="collapsible-toggle collapsible-toggle-inline" data-collapsible-toggle aria-expanded="true" aria-controls="topInsightsPanelBody">
+                <span class="collapsible-toggle-copy">
+                    <span class="collapsible-step-badge">Step 3</span>
+                    <span class="collapsible-toggle-kicker">Top Insights</span>
+                    <span class="collapsible-toggle-title">Decision-ready signals, recommended actions, and pricing priorities</span>
+                </span>
+                <span class="collapsible-toggle-icon" aria-hidden="true"></span>
+            </button>
+            <div class="collapsible-body" id="topInsightsPanelBody" data-collapsible-body>
+                <div class="collapsible-body-inner">
+        <section class="executive-summary key-insights">
+            <div class="executive-summary-head">
+                <div>
+                    <div class="panel-label">Private Advisor</div>
+                    <h2 class="panel-title">Decision View for the current purchasing slice</h2>
+                </div>
+                <div class="executive-summary-actions">
+                    <div class="result-chip" id="executiveSummaryChip">Live on filters</div>
+                    <a href="/download-results-excel" class="action-btn results-export-primary">Download Results (Excel)</a>
+                    <a href="/download-results" class="secondary-btn results-export-secondary">Download Results (CSV)</a>
+                </div>
+            </div>
+            <p class="executive-summary-smartline" id="executiveSummarySmartline">
+                {% if rows %}
+                    Your current cost pressure is concentrated in the highest-leakage product and the weakest supplier signal visible in this dataset.
+                {% else %}
+                    Upload and analyze a dataset to surface the highest-impact overpay signals first.
+                {% endif %}
+            </p>
+            <div class="executive-summary-body">
+                <article class="hero-insight-card">
+                    <div class="top-insight-label">Hero Insight</div>
+                    <h3 class="hero-insight-title" id="heroInsightTitle">What is the main problem?</h3>
+                    <div class="hero-insight-value" id="heroInsightValue">{% if summary %}${{ "%.2f"|format(summary.estimated_extra_spend) }}{% else %}$0.00{% endif %}</div>
+                    <p class="hero-insight-copy" id="heroInsightCopy">
+                        {% if rows %}
+                            Your main opportunity is concentrated in the highest-leakage product and the supplier driving the weakest pricing signal.
+                        {% else %}
+                            Analyze a file to surface one clear pricing problem, the products affected, and the next best move.
+                        {% endif %}
+                    </p>
+                    <div class="hero-insight-metrics" id="executiveSummaryGrid">
+                        <article class="hero-metric-card">
+                            <div class="hero-metric-label">Biggest Issue</div>
+                            <div class="hero-metric-value">{% if summary %}{{ summary.highest_risk_product }}{% else %}Waiting for upload{% endif %}</div>
+                        </article>
+                        <article class="hero-metric-card">
+                            <div class="hero-metric-label">Overpay Rate</div>
+                            <div class="hero-metric-value">{% if summary %}{{ "%.2f"|format(summary.overpay_rate) }}%{% else %}0.00%{% endif %}</div>
+                        </article>
+                        <article class="hero-metric-card">
+                            <div class="hero-metric-label">Affected Products</div>
+                            <div class="hero-metric-value">{% if rows %}Reviewing...{% else %}0{% endif %}</div>
+                        </article>
+                        <article class="hero-metric-card">
+                            <div class="hero-metric-label">Priority Supplier</div>
+                            <div class="hero-metric-value">{% if rows %}Reviewing...{% else %}Waiting for upload{% endif %}</div>
+                        </article>
+                    </div>
+                </article>
+                <aside class="action-priority-panel">
+                    <div class="action-priority-head">
+                        <div class="panel-label">Recommended Actions</div>
+                        <div class="action-priority-subtitle">What to do next</div>
+                    </div>
+                    <div class="action-priority-list" id="recommendedActionsList">
+                        <article class="action-priority-item">
+                            <div class="action-priority-index">01</div>
+                            <div class="action-priority-content">
+                                <div class="action-priority-title">Analyze a dataset to unlock action guidance</div>
+                                <p class="action-priority-copy">Recommended actions will appear here once live purchasing results are available.</p>
+                            </div>
+                        </article>
+                    </div>
+                </aside>
+            </div>
+        </section>
+
+        <section class="summary-grid">
+            <div class="summary-card">
+                <div class="summary-card-title">Most Expensive Supplier</div>
+                <div class="summary-card-value compact" id="intel-most-expensive-supplier">{{ summary.best_saving_supplier if summary else "No supplier yet" }}</div>
+                <div class="summary-card-insight" id="intel-most-expensive-supplier-insight">Highest visible price variance versus the current benchmark.</div>
+                <div class="summary-card-sub" id="intel-most-expensive-supplier-note">Use this to review where spend is drifting above fair value.</div>
+                <div class="summary-card-trend negative" id="intel-most-expensive-supplier-trend">Awaiting supplier signal</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-card-title">Best Value Supplier</div>
+                <div class="summary-card-value compact" id="intel-best-value-supplier">{{ summary.best_saving_supplier if summary else "No visible leader" }}</div>
+                <div class="summary-card-insight" id="intel-best-value-supplier-insight">Best visible mix of price competitiveness and supplier performance.</div>
+                <div class="summary-card-sub" id="intel-best-value-supplier-note">This is the strongest supplier benchmark in the current slice.</div>
+                <div class="summary-card-trend positive" id="intel-best-value-supplier-trend">Benchmark supplier</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-card-title">Highest Risk Supplier</div>
+                <div class="summary-card-value compact" id="intel-highest-risk-supplier">{{ summary.best_saving_supplier if summary else "No supplier yet" }}</div>
+                <div class="summary-card-insight" id="intel-highest-risk-supplier-insight">The supplier most likely to require immediate price attention.</div>
+                <div class="summary-card-sub" id="intel-highest-risk-supplier-note">Use this signal for escalation or targeted renegotiation.</div>
+                <div class="summary-card-trend negative" id="intel-highest-risk-supplier-trend">Risk watch</div>
+            </div>
+        </section>
+
+        <section class="decision-grid decision-grid-solo">
+            <article class="decision-card">
+                <div class="decision-card-head">
+                    <div>
+                        <div class="panel-label">Top Opportunities</div>
+                        <h3 class="decision-card-title">Where to recover savings first</h3>
+                    </div>
+                    <div class="result-chip" id="lossDriversChip">Live on filters</div>
+                </div>
+                <p class="decision-card-copy">Start with the product opportunities where one decision can recover the most value without digging through the full analyst table.</p>
+                <div class="decision-list" id="lossDriversList">
+                    <div class="decision-list-empty">Upload and filter results to surface the products hurting margin most.</div>
+                </div>
+            </article>
+        </section>
+                </div>
+            </div>
+        </section>
+
+        <section class="collapsible-panel collapsible-panel-inline collapsible-panel-filters is-collapsed" id="filtersPanel" data-collapsible data-storage-key="advancedFiltersCollapsed">
+            <button type="button" class="collapsible-toggle collapsible-toggle-inline" data-collapsible-toggle aria-expanded="false" aria-controls="filtersPanelBody">
+                <span class="collapsible-toggle-copy">
+                    <span class="collapsible-step-badge">Step 4</span>
+                    <span class="collapsible-toggle-kicker">Advanced Filters</span>
+                    <span class="collapsible-toggle-title">Refine the current dataset view when you need deeper control</span>
+                </span>
+                <span class="collapsible-toggle-icon" aria-hidden="true"></span>
+            </button>
+            <div class="collapsible-body" id="filtersPanelBody" data-collapsible-body>
+                <div class="collapsible-body-inner">
+                    <div class="filter-panel">
+                        <div class="filter-panel-head">
+                            <div>
+                                <h3 class="filter-panel-title">Advanced Filters</h3>
+                                <p class="filter-panel-copy">The current view is preserved in the URL so refresh, back, and shared links restore the same slice.</p>
+                            </div>
+                            <button id="resetFiltersButton" class="filter-btn ghost" type="button">Clear Filters</button>
+                        </div>
+
+                        <div class="filter-grid">
+                            <div class="filter-field">
+                                <label class="filter-label" for="productFilterTrigger">Product</label>
+                                <div class="searchable-select" data-filter-key="product">
+                                    <button type="button" id="productFilterTrigger" class="searchable-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+                                        <span id="productFilterValue">All Products</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="filter-field">
+                                <label class="filter-label" for="supplierFilterTrigger">Supplier</label>
+                                <div class="searchable-select" data-filter-key="supplier">
+                                    <button type="button" id="supplierFilterTrigger" class="searchable-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+                                        <span id="supplierFilterValue">All Suppliers</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="filter-field">
+                                <label class="filter-label" for="statusFilterTrigger">Status</label>
+                                <div class="searchable-select" data-filter-key="status">
+                                    <button type="button" id="statusFilterTrigger" class="searchable-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+                                        <span id="statusFilterValue">All Statuses</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="filter-field span-2">
+                                <label class="filter-label" for="searchInput">Search</label>
+                                <div class="search-input-shell">
+                                    <input type="text" id="searchInput" class="search-input" placeholder="Search by product or supplier...">
+                                </div>
+                            </div>
+                            <div class="filter-field" id="dateFilterGroup">
+                                <label class="filter-label">Date Range</label>
+                                <div class="filter-date-group">
+                                    <label class="date-input-inline" for="dateFromInput">
+                                        <span class="date-input-empty">Start date</span>
+                                        <input type="date" id="dateFromInput" class="date-input" aria-label="Start date">
+                                    </label>
+                                    <span class="date-range-separator" aria-hidden="true">-</span>
+                                    <label class="date-input-inline" for="dateToInput">
+                                        <span class="date-input-empty">End date</span>
+                                        <input type="date" id="dateToInput" class="date-input" aria-label="End date">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="filter-actions">
+                            <div class="filter-chip-row" id="activeFilterChips"></div>
+                            <div class="filter-summary-text" id="activeFilterSummary">Showing all available results.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <div id="filterPopoverRoot" class="filter-popover-root" hidden></div>
+
+        <section class="collapsible-panel collapsible-panel-inline collapsible-panel-charts is-expanded" id="chartsPanel" data-collapsible data-storage-key="visualInsightsCollapsed">
+            <button type="button" class="collapsible-toggle collapsible-toggle-inline" data-collapsible-toggle aria-expanded="true" aria-controls="chartsPanelBody">
+                <span class="collapsible-toggle-copy">
+                    <span class="collapsible-step-badge">Step 5</span>
+                    <span class="collapsible-toggle-kicker">Visual Insights</span>
+                    <span class="collapsible-toggle-title">Charts and diagnostics behind the decision view</span>
+                </span>
+                <span class="collapsible-toggle-icon" aria-hidden="true"></span>
+            </button>
+            <div class="collapsible-body" id="chartsPanelBody" data-collapsible-body>
+                <div class="collapsible-body-inner">
+        <section class="dashboard-section-head">
+            <div>
+                <div class="panel-label">Deep Dive</div>
+                <h2 class="panel-title">Visual diagnostics behind the headline answers</h2>
+            </div>
+            <p class="dashboard-section-copy">Charts stay synchronized with the visible slice so the summary, visual breakdown, and workspace table all tell the same story.</p>
+        </section>
+        <section class="dashboard-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <h3 class="chart-title">Products Hurting Margin Most</h3>
+                        <div class="chart-subtitle">Where overpay pressure and recovery value are most concentrated</div>
+                    </div>
+                </div>
+                <div class="chart-takeaway" id="topOverpayTakeaway">The current view highlights the products driving the largest overpayment exposure.</div>
+                <canvas id="topOverpayChart"></canvas>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <h3 class="chart-title">Biggest Savings Pockets</h3>
+                        <div class="chart-subtitle">The strongest product-level opportunities to recover spend</div>
+                    </div>
+                </div>
+                <div class="chart-takeaway" id="savingsTakeaway">Product-level savings concentration updates live with the active selection.</div>
+                <canvas id="savingsChart"></canvas>
+            </div>
+            <div class="chart-card wide">
+                <div class="chart-header">
+                    <div>
+                        <h3 class="chart-title">Portfolio Pricing Mix</h3>
+                        <div class="chart-subtitle">How much of the visible portfolio is overpay, healthy, or favorable</div>
+                    </div>
+                </div>
+                <div class="chart-takeaway" id="statusTakeaway">The status mix shows whether exposure is isolated or spread across the visible dataset.</div>
+                <div class="status-mix-layout">
+                    <div class="status-mix-chart-shell">
+                        <canvas id="statusChart"></canvas>
+                    </div>
+                    <div class="status-mix-side">
+                        <div class="status-mix-kpis">
+                            <article class="status-mix-kpi">
+                                <div class="status-mix-kpi-label">Recoverable Spend</div>
+                                <div class="status-mix-kpi-value" id="statusMixRecoverableSpend">$0.00</div>
+                                <div class="status-mix-kpi-copy">Visible excess spend tied to current exceptions.</div>
+                            </article>
+                            <article class="status-mix-kpi">
+                                <div class="status-mix-kpi-label">Overpay Rate</div>
+                                <div class="status-mix-kpi-value" id="statusMixOverpayRate">0.00%</div>
+                                <div class="status-mix-kpi-copy">Share of visible rows currently hurting margin.</div>
+                            </article>
+                        </div>
+                        <div class="status-mix-breakdown" id="statusMixBreakdown">
+                            <div class="status-mix-row">
+                                <div class="status-mix-row-label"><span class="status-mix-dot overpay"></span>Overpay</div>
+                                <div class="status-mix-row-meta">0 rows</div>
+                                <div class="status-mix-row-value">0%</div>
+                            </div>
+                            <div class="status-mix-row">
+                                <div class="status-mix-row-label"><span class="status-mix-dot good"></span>Good Deal</div>
+                                <div class="status-mix-row-meta">0 rows</div>
+                                <div class="status-mix-row-value">0%</div>
+                            </div>
+                            <div class="status-mix-row">
+                                <div class="status-mix-row-label"><span class="status-mix-dot normal"></span>Normal</div>
+                                <div class="status-mix-row-meta">0 rows</div>
+                                <div class="status-mix-row-value">0%</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+                </div>
+            </div>
+        </section>
+
+        <section class="collapsible-panel collapsible-panel-inline collapsible-panel-workspace is-expanded" id="workspacePanel" data-collapsible data-storage-key="analystWorkspaceCollapsed">
+            <button type="button" class="collapsible-toggle collapsible-toggle-inline" data-collapsible-toggle aria-expanded="true" aria-controls="workspacePanelBody">
+                <span class="collapsible-toggle-copy">
+                    <span class="collapsible-step-badge">Step 4</span>
+                    <span class="collapsible-toggle-kicker">Analyst Workspace</span>
+                    <span class="collapsible-toggle-title">Inspect row-level evidence, sort results, and export decisions</span>
+                </span>
+                <span class="collapsible-toggle-icon" aria-hidden="true"></span>
+            </button>
+            <div class="collapsible-body" id="workspacePanelBody" data-collapsible-body>
+                <div class="collapsible-body-inner">
+        <section class="table-shell">
+            <div class="table-header">
+                <div>
+                    <h2 class="table-title">Analyst Workspace</h2>
+                    <p class="table-subtitle">Filter, sort, and inspect the full row-level evidence behind the decision view while keeping the dashboard, charts, and URL state synchronized.</p>
+                </div>
+                <div class="table-header-actions">
+                    <button id="resetColumnsButton" class="secondary-btn table-config-btn" type="button">Reset Columns</button>
+                    <div class="result-chip" id="resultCountChip">0 visible rows</div>
+                </div>
+            </div>
+
+            <div class="table-wrap">
+                <table id="resultsTable" data-has-unit="{{ 'true' if has_unit else 'false' }}">
+                    <thead id="resultsTableHead">
+                        <tr>
+                            <th><button class="sort-button" type="button" data-sort="productName"><span class="sort-label">Product Name</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="supplier"><span class="sort-label">Supplier</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="purchaseUnit"><span class="sort-label">Unit</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="quantity"><span class="sort-label">Quantity</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="unitPrice"><span class="sort-label">Unit Price</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="totalAmount"><span class="sort-label">Total Amount</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="averagePrice"><span class="sort-label">Average Price</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="overpay"><span class="sort-label">Overpay</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="savingsOpportunity"><span class="sort-label">Savings Opportunity</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="date"><span class="sort-label">Date</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                            <th><button class="sort-button" type="button" data-sort="status"><span class="sort-label">Status</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTableBody">
+                        {% for row in rows or [] %}
+                        <tr class="{% if row['Status'] == 'Overpay' %}overpay-row{% elif row['Status'] == 'Good Deal' %}good-row{% else %}normal-row{% endif %}" data-date="{{ row.get('Date', '') }}" data-supplier="{{ row['Supplier'] }}" data-overpay-pct="{{ row.get('Overpay Pct', 0) }}">
+                            <td data-column-key="productName">{{ row["Product Name"] }}</td>
+                            <td data-column-key="supplier">{{ row["Supplier"] or "-" }}</td>
+                            <td data-column-key="purchaseUnit">{{ row.get("Unit") or "-" }}</td>
+                            <td data-column-key="quantity">{{ "%.2f"|format(row["Quantity"]) }}</td>
+                            <td data-column-key="unitPrice">${{ "%.2f"|format(row["Unit Price"]) }}</td>
+                            <td data-column-key="totalAmount">${{ "%.2f"|format(row["Total Amount"]) }}</td>
+                            <td data-column-key="averagePrice">${{ "%.2f"|format(row["Average Price"]) }}</td>
+                            <td data-column-key="overpay">${{ "%.2f"|format(row["Overpay"]) }}</td>
+                            <td data-column-key="savingsOpportunity">${{ "%.2f"|format(row["Savings Opportunity"]) }}</td>
+                            <td data-column-key="date">{{ row["Date"] }}</td>
+                            <td data-column-key="status">
+                                {% if row["Status"] == "Overpay" %}
+                                    <span class="status-pill status-overpay">Overpay</span>
+                                {% elif row["Status"] == "Good Deal" %}
+                                    <span class="status-pill status-good">Good Deal</span>
+                                {% else %}
+                                    <span class="status-pill status-normal">Normal</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div class="empty-state" id="emptyState">
+                    <strong>No savings opportunities under current filters.</strong>
+                    Try broadening the search, changing the supplier, or switching the status filter.
+                </div>
+            </div>
+        </section>
+                </div>
+            </div>
+        </section>
+
+        <section class="collapsible-panel collapsible-panel-inline collapsible-panel-ask is-collapsed" id="askDataPanel" data-collapsible data-storage-key="askDataCollapsed" {% if not rows %}hidden{% endif %}>
+            <button type="button" class="collapsible-toggle collapsible-toggle-inline" data-collapsible-toggle aria-expanded="false" aria-controls="askDataPanelBody">
+                <span class="collapsible-toggle-copy">
+                    <span class="collapsible-step-badge">Step 5</span>
+                    <span class="collapsible-toggle-kicker">Ask Your Data</span>
+                    <span class="collapsible-toggle-title">Open the AI purchasing copilot for executive questions and guided answers</span>
+                </span>
+                <span class="collapsible-toggle-icon" aria-hidden="true"></span>
+            </button>
+            <div class="collapsible-body" id="askDataPanelBody" data-collapsible-body>
+                <div class="collapsible-body-inner">
+                    <section class="ai-entry-shell" id="aiEntryShell">
+                        <div class="ai-entry-copy">
+                            <div class="panel-label">AI Purchasing Copilot</div>
+                            <h2 class="panel-title">Ask Your Data in a separate executive workspace</h2>
+                            <p class="panel-copy">Open a focused insights workspace for business questions, renegotiation prompts, and premium AI-guided readouts built from the current analyzed dataset.</p>
+                        </div>
+                        <div class="ai-entry-actions">
+                            <div class="result-chip" id="aiWorkspaceEntryChip">{% if rows %}{{ rows|length }} rows ready for AI{% else %}AI unlocks after analysis{% endif %}</div>
+                            <button type="button" class="action-btn ai-entry-btn" id="openAiWorkspaceButton">Ask Your Data</button>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </section>
+        </div>
+        {% endif %}
+
+        {% if active_view == 'recipes' %}
+        <section class="app-view app-view-recipes" id="recipesWorkspaceView">
+            <section class="recipes-view-hero">
+                <div>
+                    <div class="panel-label">Recipe Planning</div>
+                    <h1 class="panel-title">Recipe Cost Calculator</h1>
+                    <p class="panel-copy">Price recipes from your analyzed Etsy purchase data with a visible pricing mode, reusable saved recipes, and a private-advisor workflow built for fast decisions.</p>
+                </div>
+                <div class="recipes-view-hero-actions">
+                    <a class="secondary-btn" id="recipesToAnalyzerButton" href="/">Back to Analyzer</a>
+                </div>
+            </section>
+
+            <section class="recipes-empty-shell" id="recipesNeedsAnalysis" {% if rows %}hidden{% endif %}>
+                <div class="recipes-empty-card">
+                    <div class="panel-label">Pricing Data Needed</div>
+                    <h2 class="panel-title">Analyze purchase data before pricing recipes</h2>
+                    <p class="panel-copy">Recipe pricing uses your analyzed purchase history as the source for product names, units, and pricing modes. Start in Analyzer, review your file, and come back when the pricing dataset is ready.</p>
+                    <div class="recipes-empty-actions">
+                        <a class="action-btn" id="recipesEmptyGoToAnalyzerButton" href="/">Go to Analyzer</a>
+                    </div>
+                </div>
+            </section>
+
+            <section class="recipes-panel-view" id="recipesWorkspaceState" data-has-analysis="{{ 'true' if rows else 'false' }}">
+            <section class="recipes-panel-view" id="recipesPanel" {% if not rows %}hidden{% endif %}>
+                <section class="recipes-shell" id="recipesShell">
+                    <div class="recipes-layout">
+                        <aside class="recipes-sidebar">
+                            <div class="recipes-panel-head">
+                                <div>
+                                    <div class="panel-label">Saved Recipes</div>
+                                    <h2 class="panel-title">Recipe Cost Calculator</h2>
+                                    <p class="panel-copy">Use your analyzed Etsy purchase data to price recipes with a visible pricing mode and reusable saved recipes.</p>
+                                </div>
+                                <button type="button" class="secondary-btn" id="newRecipeButton">New Recipe</button>
+                            </div>
+                            <div class="recipes-list" id="recipesList"></div>
+                            <div class="recipes-empty" id="recipesEmpty">Save a recipe to build your own reusable cost library.</div>
+                        </aside>
+
+                        <div class="recipes-main">
+                            <section class="recipes-editor-card">
+                                <div class="recipes-editor-head">
+                                    <div>
+                                        <div class="panel-label">Recipe Builder</div>
+                                        <h3 class="recipes-editor-title" id="recipeEditorTitle">Create a recipe</h3>
+                                    </div>
+                                    <div class="recipes-editor-actions">
+                                        <button type="button" class="secondary-btn" id="recalculateRecipeButton">Recalculate</button>
+                                        <button type="button" class="secondary-btn" id="deleteRecipeButton" hidden>Delete Recipe</button>
+                                        <button type="button" class="action-btn" id="saveRecipeButton">Save Recipe</button>
+                                    </div>
+                                </div>
+
+                                <div class="recipes-form-grid">
+                                    <label class="recipe-field">
+                                        <span class="recipe-field-label">Recipe Name</span>
+                                        <input type="text" class="recipe-input" id="recipeNameInput" placeholder="Example: Brown Butter Cookies">
+                                    </label>
+                                    <label class="recipe-field">
+                                        <span class="recipe-field-label">Yield / Portions</span>
+                                        <input type="number" min="1" step="1" class="recipe-input" id="recipeYieldInput" value="1">
+                                    </label>
+                                    <label class="recipe-field">
+                                        <span class="recipe-field-label">Pricing Mode</span>
+                                        <select class="recipe-select" id="recipePricingModeSelect"></select>
+                                    </label>
+                                </div>
+
+                                <div class="recipe-ingredients-card">
+                                    <div class="recipe-ingredients-head">
+                                        <div>
+                                            <div class="panel-label">Ingredients</div>
+                                            <div class="recipe-ingredients-copy">Choose products from the analyzed purchase dataset and set the quantity and unit manually.</div>
+                                        </div>
+                                        <button type="button" class="secondary-btn" id="addRecipeIngredientButton">Add Ingredient</button>
+                                    </div>
+                                    <div class="recipe-ingredients-list" id="recipeIngredientsList"></div>
+                                </div>
+
+                                <div class="recipe-delete-confirm" id="recipeDeleteConfirm" hidden>
+                                    <div class="recipe-delete-confirm-copy">
+                                        <strong>Are you sure you want to delete this recipe?</strong>
+                                        <span>This action cannot be undone.</span>
+                                    </div>
+                                    <div class="recipe-delete-confirm-actions">
+                                        <button type="button" class="secondary-btn" id="cancelDeleteRecipeButton">Cancel</button>
+                                        <button type="button" class="action-btn" id="confirmDeleteRecipeButton">Delete</button>
+                                    </div>
+                                </div>
+
+                                <div class="recipe-status" id="recipeStatusMessage" hidden></div>
+                            </section>
+
+                            <section class="recipes-summary-grid">
+                                <article class="summary-card">
+                                    <div class="summary-card-title">Total Recipe Cost</div>
+                                    <div class="summary-card-value" id="recipeTotalCost">$0.00</div>
+                                    <div class="summary-card-insight">The full cost of the current recipe using your selected pricing mode.</div>
+                                </article>
+                                <article class="summary-card">
+                                    <div class="summary-card-title">Cost Per Portion</div>
+                                    <div class="summary-card-value" id="recipeCostPerPortion">$0.00</div>
+                                    <div class="summary-card-insight">Use this to price portions clearly and protect margin.</div>
+                                </article>
+                                <article class="summary-card">
+                                    <div class="summary-card-title">Main Cost Driver</div>
+                                    <div class="summary-card-value compact" id="recipeMainCostDriver">No recipe yet</div>
+                                    <div class="summary-card-insight" id="recipeMainCostDriverCopy">The ingredient driving the largest share of recipe cost will appear here.</div>
+                                </article>
+                            </section>
+
+                            <section class="recipe-breakdown-card">
+                                <div class="recipe-breakdown-head">
+                                    <div>
+                                        <div class="panel-label">Ingredient Breakdown</div>
+                                        <h3 class="recipe-breakdown-title">How the current recipe cost is built</h3>
+                                    </div>
+                                    <div class="result-chip" id="recipePricingModeChip">Choose a pricing mode</div>
+                                </div>
+                                <div class="recipe-breakdown-list" id="recipeBreakdownList">
+                                    <div class="decision-list-empty">Add ingredients and choose a pricing mode to see the recipe cost breakdown.</div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                </section>
+            </section>
+            </section>
+        </section>
+        {% endif %}
+
+        {% if active_view == 'quote_compare' %}
+        <section class="app-view app-view-quote-compare" id="quoteCompareWorkspaceView">
+            <section class="quote-compare-hero">
+                <div>
+                    <div class="panel-label">Supplier Bid Evaluation</div>
+                    <h1 class="panel-title">Quote Compare</h1>
+                    <p class="panel-copy">Compare supplier offers quickly, surface the best price by product, and move toward a cleaner sourcing decision without spreadsheet overload.</p>
+                </div>
+                <div class="quote-demo-state" id="quoteDemoState" hidden>
+                    <div class="quote-demo-banner">
+                        <div class="quote-demo-banner-copy">
+                            <span class="demo-badge">Demo Mode</span>
+                            <div class="quote-demo-banner-title">You are viewing a demo comparison</div>
+                            <div class="quote-demo-banner-note">This sample supplier-offer set is here to help you explore the workflow before importing your own file or entering your own offers.</div>
+                        </div>
+                        <button type="button" class="action-btn quote-demo-exit-btn" id="quoteExitDemoButton">Start Your Own Comparison</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="quote-compare-empty-shell" id="quoteCompareEmptyState" hidden>
+                <div class="quote-compare-empty-card">
+                    <div class="panel-label">Supplier Decision Support</div>
+                    <h2 class="panel-title">Start your first quote comparison</h2>
+                    <p class="panel-copy">Create a sourcing scenario manually or import supplier offers from a file, then let the workspace highlight the cheapest supplier by product with helpful delivery and payment context.</p>
+                </div>
+            </section>
+
+            <section class="quote-compare-shell" id="quoteCompareShell">
+                <div class="quote-compare-layout">
+                    <aside class="quote-compare-sidebar">
+                        <div class="quote-compare-panel-head">
+                            <div>
+                                <div class="panel-label">Saved Comparisons</div>
+                                <h2 class="panel-title">Your saved work</h2>
+                                <p class="panel-copy">Reopen a saved comparison whenever you want to continue from a previous sourcing round.</p>
+                            </div>
+                            <div class="quote-sidebar-actions">
+                                <button type="button" class="secondary-btn" id="newQuoteComparisonButton">New Comparison</button>
+                                <button type="button" class="secondary-btn quote-sidebar-toggle" id="quoteSidebarToggleButton" aria-expanded="false" aria-controls="quoteSidebarBody">Show Saved</button>
+                            </div>
+                        </div>
+                        <div class="quote-sidebar-body" id="quoteSidebarBody" hidden>
+                            <div class="quote-compare-list" id="quoteComparisonList"></div>
+                            <div class="quote-compare-list-empty" id="quoteComparisonEmpty">Save a sourcing scenario to build your own quote comparison library.</div>
+                        </div>
+                    </aside>
+
+                    <div class="quote-compare-main">
+                        <section class="quote-compare-summary-card" id="quoteCompareSummaryCard" hidden>
+                            <div class="quote-compare-summary-head">
+                                <div>
+                                    <div class="panel-label">Step 3</div>
+                                    <h3 class="quote-compare-summary-title">Review best offers</h3>
+                                </div>
+                                <div class="result-chip" id="quoteCompareRecommendationChip">Awaiting supplier bids</div>
+                            </div>
+                            <div class="quote-compare-summary-grid">
+                                <article class="summary-card">
+                                    <div class="summary-card-title">Lowest Price Supplier</div>
+                                    <div class="summary-card-value compact" id="quoteCompareLowestPriceSupplier">No bids yet</div>
+                                    <div class="summary-card-insight" id="quoteCompareLowestPriceCopy">The most competitive total price will appear here.</div>
+                                </article>
+                                <article class="summary-card">
+                                    <div class="summary-card-title">Fastest Delivery</div>
+                                    <div class="summary-card-value compact" id="quoteCompareFastestDeliverySupplier">No bids yet</div>
+                                    <div class="summary-card-insight" id="quoteCompareFastestDeliveryCopy">The quickest delivery option will appear here.</div>
+                                </article>
+                                <article class="summary-card">
+                                    <div class="summary-card-title">Best Payment Terms</div>
+                                    <div class="summary-card-value compact" id="quoteCompareBestPaymentSupplier">No bids yet</div>
+                                    <div class="summary-card-insight" id="quoteCompareBestPaymentCopy">The strongest payment position will appear here.</div>
+                                </article>
+                                <article class="summary-card">
+                                    <div class="summary-card-title">Recommended Supplier</div>
+                                    <div class="summary-card-value compact" id="quoteCompareRecommendedSupplier">No recommendation yet</div>
+                                    <div class="summary-card-insight" id="quoteCompareRecommendedCopy">A practical recommendation will appear once supplier bids are entered.</div>
+                                </article>
+                            </div>
+                            <div class="decision-list" id="quoteCompareInsightsList">
+                                <div class="decision-list-empty">Add supplier bids to generate a recommendation summary.</div>
+                            </div>
+                        </section>
+
+                        <section class="quote-compare-editor-card">
+                            <div class="quote-compare-editor-head">
+                                <div>
+                                    <div class="panel-label">Guided Builder</div>
+                                    <h3 class="quote-compare-editor-title" id="quoteComparisonEditorTitle">Start a quote comparison</h3>
+                                </div>
+                                <div class="quote-compare-editor-actions" id="quoteComparisonPrimaryActions" hidden>
+                                    <button type="button" class="secondary-btn" id="recalculateQuoteComparisonButton">Recalculate</button>
+                                    <button type="button" class="secondary-btn" id="deleteQuoteComparisonButton" hidden>Delete Comparison</button>
+                                    <button type="button" class="action-btn" id="saveQuoteComparisonButton">Save Comparison</button>
+                                </div>
+                            </div>
+
+                            <div class="quote-compare-save-shell" id="quoteComparisonMetaShell" hidden>
+                                <div class="panel-label">Step 4</div>
+                                <h4 class="quote-compare-save-title">Save this comparison</h4>
+                                <div class="quote-bids-copy quote-bids-copy-compact">Add a clear name once you have built something worth keeping.</div>
+                            <div class="quote-compare-form-grid" id="quoteComparisonMetaSection" hidden>
+                                <label class="recipe-field">
+                                    <span class="recipe-field-label">Comparison Name</span>
+                                    <input type="text" class="recipe-input" id="quoteComparisonNameInput" placeholder="Example: Glass Jar Supplier Round 1">
+                                </label>
+                                <label class="recipe-field">
+                                    <span class="recipe-field-label">Sourcing Need</span>
+                                    <input type="text" class="recipe-input" id="quoteComparisonNeedInput" placeholder="Example: 8 oz amber glass jars">
+                                </label>
+                            </div>
+                            </div>
+
+                            <section class="quote-import-card">
+                                <div class="quote-import-head">
+                                    <div>
+                                        <div class="panel-label">Step 1</div>
+                                        <div class="quote-bids-copy quote-bids-copy-compact">Choose how you want to start this comparison.</div>
+                                    </div>
+                                </div>
+                                <div class="quote-intake-toggle" role="tablist" aria-label="Offer intake method">
+                                    <button type="button" class="secondary-btn quote-intake-tab is-active" id="quoteImportModeButton" data-quote-mode="import" aria-selected="true">Import File</button>
+                                    <button type="button" class="secondary-btn quote-intake-tab" id="quoteManualModeButton" data-quote-mode="manual" aria-selected="false">Manual Entry</button>
+                                </div>
+                                <div class="quote-intake-panel" id="quoteImportPanel">
+                                    <form id="quoteCompareUploadForm" class="quote-upload-form">
+                                        <div class="upload-step">Import Supplier Offers</div>
+                                        <div class="quote-import-fields">
+                                            <div class="quote-import-fields-group">
+                                                <div class="quote-import-fields-title">Required fields</div>
+                                                <div class="quote-import-fields-copy">These fields are needed to compare supplier offers correctly.</div>
+                                                <div class="quote-import-field-chips">
+                                                    <span class="result-chip">Supplier Name</span>
+                                                    <span class="result-chip">Product Name</span>
+                                                    <span class="result-chip">Unit</span>
+                                                    <span class="result-chip">Quantity</span>
+                                                    <span class="result-chip">Unit Price</span>
+                                                </div>
+                                            </div>
+                                            <div class="quote-import-fields-group">
+                                                <div class="quote-import-fields-title">Optional fields</div>
+                                                <div class="quote-import-fields-copy">These add richer supplier context, but they are not required to continue.</div>
+                                                <div class="quote-import-field-chips">
+                                                    <span class="result-chip">Total Price</span>
+                                                    <span class="result-chip">Currency</span>
+                                                    <span class="result-chip">Delivery Time</span>
+                                                    <span class="result-chip">Payment Term</span>
+                                                    <span class="result-chip">Valid Until</span>
+                                                    <span class="result-chip">Notes</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="quote-upload-shell">
+                                            <div class="quote-upload-copy">
+                                                <div class="quote-upload-title">Upload CSV, XLSX, or XLS</div>
+                                                <div class="quote-upload-note" id="quoteCompareUploadKicker">Import supplier offer sheets and map only the fields needed for quick comparison.</div>
+                                            </div>
+                                            <div class="quote-upload-actions">
+                                                <button type="button" class="secondary-btn" id="quoteCompareSelectFileButton">Choose File</button>
+                                                <button type="button" class="action-btn upload-submit" id="inspectQuoteCompareUploadButton">Review Columns</button>
+                                            </div>
+                                        </div>
+                                        <input id="quoteCompareFileUpload" class="quote-hidden-file-input" type="file" accept=".csv,.xlsx,.xls">
+                                        <div class="quote-upload-fileline">
+                                            <span class="quote-upload-filelabel">Selected file</span>
+                                            <span id="quoteCompareFileName">No file selected yet</span>
+                                        </div>
+                                    </form>
+                                    <div class="quote-import-support">
+                                        <form class="demo-form" id="quoteCompareDemoForm">
+                                            <div class="upload-step">Try Demo Data</div>
+                                            <div class="demo-cta-shell">
+                                                <div>
+                                                    <div class="demo-cta-title">Explore a sample supplier quote set</div>
+                                                    <div class="demo-cta-copy">Load a realistic supplier offer file and walk through comparison results before importing your own.</div>
+                                                </div>
+                                                <div class="demo-cta-actions">
+                                                    <button type="button" class="secondary-btn demo-btn" id="quoteCompareDemoButton">Try Demo Data</button>
+                                                    <span class="demo-note">No setup required</span>
+                                                </div>
+                                            </div>
+                                        </form>
+                                        <div class="sample-links">
+                                            <span class="sample-links-label">Need a template?</span>
+                                            <a href="/quote-compare/download-sample-csv" class="sample-link">Download sample CSV</a>
+                                            <a href="/quote-compare/download-sample-excel" class="sample-link">Download sample Excel</a>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="quote-intake-panel" id="quoteManualPanel" hidden>
+                                    <div class="quote-manual-copy-card">
+                                        <div class="upload-step">Manual Entry</div>
+                                        <div class="quote-manual-copy">Enter supplier offers one by one when you need a quick comparison or a supplier shares pricing outside a spreadsheet.</div>
+                                        <div class="quote-manual-copy subtle">Add offers below, then review the grouped comparison once the list is ready.</div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="mapping-review-panel" id="quoteCompareMappingPanel" hidden>
+                                <div class="mapping-review-head">
+                                    <div>
+                                        <div class="upload-step">Review Mappings</div>
+                                        <h3 class="mapping-review-title">Review supplier offer column matches</h3>
+                                        <p class="mapping-review-copy" id="quoteCompareMappingIntro">We detected likely quote fields from your upload. Review them before importing the offers.</p>
+                                    </div>
+                                    <div class="mapping-summary-chips" id="quoteCompareMappingSummary"></div>
+                                </div>
+                                <div class="mapping-review-note">
+                                    We only need the quote fields required for comparison. Extra columns can stay in your file.
+                                </div>
+                                <div class="mapping-grid" id="quoteCompareMappingGrid"></div>
+                                <div class="mapping-alert mapping-alert-error" id="quoteCompareMappingMissingAlert" hidden></div>
+                                <div class="mapping-alert mapping-alert-info" id="quoteCompareMappingOptionalAlert" hidden></div>
+                                <div class="mapping-actions">
+                                    <button type="button" class="secondary-btn" id="quoteCompareChangeFileButton">Choose Different File</button>
+                                    <button type="button" class="action-btn" id="confirmQuoteCompareMappingButton">Import Offers</button>
+                                </div>
+                            </section>
+
+                            <section class="quote-bids-card">
+                                <div class="quote-bids-head">
+                                    <div>
+                                        <div class="panel-label">Step 2</div>
+                                        <div class="quote-bids-copy quote-bids-copy-compact">Total price updates automatically from quantity and unit price.</div>
+                                    </div>
+                                    <button type="button" class="secondary-btn" id="addQuoteBidButton">Add Supplier Offer</button>
+                                </div>
+                                <div class="quote-bids-list" id="quoteBidsList"></div>
+                            </section>
+
+                            <div id="quoteDeleteConfirmHost"></div>
+
+                            <div class="recipe-status" id="quoteComparisonStatusMessage" hidden></div>
+                        </section>
+
+                        <section class="quote-compare-table-card" id="quoteCompareResultsCard" hidden>
+                            <div class="quote-compare-table-head">
+                                <div>
+                                    <div class="panel-label">Step 3</div>
+                                    <h3 class="quote-compare-table-title">Product-based supplier comparison</h3>
+                                </div>
+                            </div>
+                            <div class="quote-compare-filters">
+                                <label class="recipe-field">
+                                    <span class="recipe-field-label">Search</span>
+                                    <input type="text" class="recipe-input" id="quoteCompareSearchInput" placeholder="Search product or supplier">
+                                </label>
+                                <label class="recipe-field">
+                                    <span class="recipe-field-label">Product</span>
+                                    <select class="recipe-select" id="quoteCompareProductFilter"></select>
+                                </label>
+                                <label class="recipe-field">
+                                    <span class="recipe-field-label">Supplier</span>
+                                    <select class="recipe-select" id="quoteCompareSupplierFilter"></select>
+                                </label>
+                                <label class="quote-toggle">
+                                    <input type="checkbox" id="quoteCompareBestOnlyToggle">
+                                    <span>Show only best offers</span>
+                                </label>
+                            </div>
+                            <div class="quote-compare-table-wrap" id="quoteCompareTableWrap">
+                                <div class="decision-list-empty">Add supplier offers to compare them side by side.</div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </section>
+        </section>
+        {% endif %}
+
+        <section class="ai-workspace" id="aiWorkspace" hidden>
+            <div class="ai-workspace-header">
+                <div>
+                    <div class="panel-label">AI Purchasing Copilot</div>
+                    <h2 class="panel-title">Ask Your Data</h2>
+                    <p class="panel-copy">Use premium preset prompts or ask a custom business question. Every answer is grounded in computed metrics from the current analyzed dataset, then translated into an executive-ready readout.</p>
+                </div>
+                <div class="ai-workspace-header-actions">
+                    <div class="result-chip" id="aiWorkspaceContextChip">No analyzed rows in scope</div>
+                    <button type="button" class="secondary-btn" id="closeAiWorkspaceButton">Back to Dashboard</button>
+                </div>
+            </div>
+
+            <div class="ai-workspace-grid">
+                <aside class="ai-preset-panel">
+                    <div class="ai-panel-head">
+                        <div class="ai-panel-kicker">Ready-Made Questions</div>
+                        <h3 class="ai-panel-title">Start with smart purchasing prompts</h3>
+                    </div>
+                    <div class="ai-preset-grid" id="aiPresetGrid"></div>
+                </aside>
+
+                <section class="ai-answer-shell">
+                    <form class="ai-question-form" id="aiQuestionForm">
+                        <label class="ai-input-label" for="aiQuestionInput">Ask a custom business question</label>
+                        <div class="ai-input-row">
+                            <input
+                                id="aiQuestionInput"
+                                class="ai-question-input"
+                                type="text"
+                                placeholder="Example: Which supplier increased prices the fastest in the visible period?"
+                                autocomplete="off"
+                            >
+                            <button type="submit" class="action-btn ai-submit-btn" id="askAiButton">Run Insight</button>
+                        </div>
+                    </form>
+
+                    <article class="ai-answer-panel" id="aiAnswerPanel">
+                        <div class="ai-answer-state" id="aiAnswerState">
+                            Select a preset or ask a custom question to generate an executive-ready answer from the analyzed dataset.
+                        </div>
+                        <div class="ai-answer-body" id="aiAnswerBody" hidden>
+                            <div class="ai-answer-meta">
+                                <span class="ai-answer-period" id="aiAnswerPeriod">Current visible period</span>
+                                <span class="ai-answer-source" id="aiAnswerSource">Computed from analyzed rows</span>
+                            </div>
+                            <h3 class="ai-answer-headline" id="aiAnswerHeadline"></h3>
+                            <ul class="ai-answer-insights" id="aiAnswerInsights"></ul>
+                            <div class="ai-answer-action-shell">
+                                <div class="ai-answer-action-label">Recommended Action</div>
+                                <p class="ai-answer-action" id="aiAnswerAction"></p>
+                            </div>
+                            <div class="ai-followup-shell">
+                                <div class="ai-followup-label">Try next</div>
+                                <div class="ai-followup-row" id="aiFollowupRow"></div>
+                            </div>
+                        </div>
+                    </article>
+                </section>
+            </div>
+        </section>
+    </div>
+
+    <script src="{{ url_for('static', path='/js/theme.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/access-code.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/charts.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/table.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/dashboard.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/recipes.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/quote-compare.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/assistant.js') }}"></script>
+</body>
+</html>
