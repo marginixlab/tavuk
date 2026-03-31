@@ -1,6 +1,5 @@
 (function () {
     const Table = window.PriceAnalyzerTable;
-    const Theme = window.PriceAnalyzerTheme;
     const { renderCharts } = window.PriceAnalyzerCharts;
     const REQUIRED_UPLOAD_FIELDS = ["Product Name", "Supplier", "Unit", "Quantity", "Unit Price", "Date"];
     const REQUIRED_FIELD_HINTS = {
@@ -257,7 +256,6 @@
             askDataPanel: document.getElementById("askDataPanel"),
             guidePanelToggle: document.getElementById("guidePanelToggle"),
             notesPanelToggle: document.getElementById("notesPanelToggle"),
-            themeToggle: document.getElementById("themeToggle"),
             guidePanel: document.getElementById("guidePanel"),
             notesPanel: document.getElementById("notesPanel"),
             closeGuidePanelButton: document.getElementById("closeGuidePanelButton"),
@@ -2003,17 +2001,6 @@
     }
 
     function bindEvents(elements, state) {
-        Theme.bindThemeToggle(elements.themeToggle, () => {
-            if (elements.tableBody) {
-                renderCharts(state, elements, aggregate, state.metrics);
-            }
-        });
-        Theme.bindSystemPreference(elements.themeToggle, () => {
-            if (elements.tableBody) {
-                renderCharts(state, elements, aggregate, state.metrics);
-            }
-        });
-
         if (elements.resetFiltersButton) {
             elements.resetFiltersButton.addEventListener("click", () => {
                 state.filters = { ...defaultFilters };
@@ -2260,9 +2247,6 @@
         console.log("INIT START");
         const elements = getElements();
         if (!elements.tableBody) {
-            Theme.updateThemeToggleLabel(elements.themeToggle);
-            Theme.bindThemeToggle(elements.themeToggle);
-            Theme.bindSystemPreference(elements.themeToggle);
             return;
         }
         if (isLocked(elements)) {

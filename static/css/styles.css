@@ -240,6 +240,24 @@
     --shadow-soft: var(--shadow-soft-token);
     --shadow-lift: var(--shadow-strong-token);
     --table-head-bg: var(--header-surface);
+    --step-hero-panel-bg:
+        linear-gradient(90deg, rgba(36, 87, 214, 0.16) 0%, rgba(36, 87, 214, 0.04) 46%, rgba(36, 87, 214, 0.01) 100%),
+        linear-gradient(145deg, rgba(229, 238, 250, 0.99) 0%, rgba(217, 229, 245, 0.98) 52%, rgba(190, 214, 248, 0.94) 100%);
+    --step-hero-panel-border: rgba(111, 136, 171, 0.24);
+    --step-hero-panel-shadow: 0 24px 58px rgba(15, 23, 42, 0.14);
+    --step-card-bg: linear-gradient(180deg, rgba(244, 249, 255, 0.99), rgba(229, 238, 249, 0.97));
+    --step-card-bg-hover: linear-gradient(180deg, rgba(236, 244, 252, 1), rgba(221, 232, 246, 0.98));
+    --step-card-border: rgba(111, 136, 171, 0.24);
+    --step-card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52), 0 10px 24px rgba(15, 23, 42, 0.10);
+    --step-badge-bg: rgba(223, 234, 251, 0.96);
+    --step-badge-border: rgba(36, 87, 214, 0.20);
+    --step-title-color: #10243d;
+    --step-text-color: #556b86;
+    --step-arrow-bg: rgba(248, 251, 255, 0.94);
+    --step-arrow-border: rgba(111, 136, 171, 0.24);
+    --step-arrow-color: #2c5aa0;
+    --step-arrow-bg-hover: rgba(240, 246, 253, 0.98);
+    --step-arrow-color-hover: #1f4d92;
 }
 
 :root[data-theme="dark"] {
@@ -296,6 +314,24 @@
     --shadow-soft: var(--shadow-soft-token);
     --shadow-lift: var(--shadow-strong-token);
     --table-head-bg: var(--header-surface);
+    --step-hero-panel-bg:
+        linear-gradient(90deg, rgba(3, 7, 18, 0.6) 0%, rgba(3, 7, 18, 0.38) 46%, rgba(3, 7, 18, 0.1) 100%),
+        linear-gradient(145deg, rgba(8, 18, 33, 0.98) 0%, rgba(14, 36, 64, 0.97) 52%, rgba(37, 99, 235, 0.9) 100%);
+    --step-hero-panel-border: rgba(148, 163, 184, 0.16);
+    --step-hero-panel-shadow: var(--shadow);
+    --step-card-bg: linear-gradient(180deg, rgba(22, 37, 60, 0.99), rgba(15, 27, 46, 0.97));
+    --step-card-bg-hover: linear-gradient(180deg, rgba(28, 45, 72, 1), rgba(18, 31, 52, 0.99));
+    --step-card-border: rgba(148, 163, 184, 0.16);
+    --step-card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 24px rgba(2, 6, 23, 0.12);
+    --step-badge-bg: rgba(96, 165, 250, 0.12);
+    --step-badge-border: rgba(96, 165, 250, 0.16);
+    --step-title-color: #e5edf8;
+    --step-text-color: #adc0d4;
+    --step-arrow-bg: rgba(15, 23, 42, 0.46);
+    --step-arrow-border: rgba(148, 163, 184, 0.14);
+    --step-arrow-color: #bfdbfe;
+    --step-arrow-bg-hover: rgba(30, 41, 59, 0.72);
+    --step-arrow-color-hover: #e8f1ff;
 }
 
 .access-shell {
@@ -1326,17 +1362,15 @@ body::before {
 }
 
 .collapsible-panel-hero {
-    background:
-        linear-gradient(90deg, rgba(3, 7, 18, 0.6) 0%, rgba(3, 7, 18, 0.38) 46%, rgba(3, 7, 18, 0.1) 100%),
-        linear-gradient(145deg, rgba(8, 18, 33, 0.98) 0%, rgba(14, 36, 64, 0.97) 52%, rgba(37, 99, 235, 0.9) 100%);
+    background: var(--step-hero-panel-bg);
+    border-color: var(--step-hero-panel-border);
+    box-shadow: var(--step-hero-panel-shadow);
 }
 
 :root:not([data-theme="dark"]) .collapsible-panel-hero {
-    background:
-        linear-gradient(180deg, rgba(234, 240, 248, 0.96), rgba(242, 246, 252, 0.94)),
-        linear-gradient(135deg, rgba(255, 255, 255, 0.10), rgba(219, 234, 254, 0.08));
-    border-color: rgba(148, 163, 184, 0.16);
-    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.10);
+    background: var(--step-hero-panel-bg);
+    border-color: var(--step-hero-panel-border);
+    box-shadow: var(--step-hero-panel-shadow);
 }
 
 .collapsible-panel-upload {
@@ -1358,29 +1392,22 @@ body::before {
     width: 100%;
     padding: 16px 20px;
     border: none;
-    background: var(--panel-header-surface);
-    color: var(--text);
+    background: var(--step-card-bg);
+    color: var(--step-title-color);
+    box-shadow: var(--step-card-shadow);
     text-align: left;
     cursor: pointer;
-    transition: background 0.2s ease, transform 0.2s ease;
+    transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .collapsible-toggle:hover {
-    background: var(--panel-header-surface-hover);
+    background: var(--step-card-bg-hover);
     transform: translateY(-1px);
 }
 
 .collapsible-toggle:focus-visible {
     outline: none;
     box-shadow: inset 0 0 0 2px var(--primary), inset 0 0 0 6px var(--primary-ring);
-}
-
-.collapsible-toggle-hero {
-    color: var(--text-on-hero);
-}
-
-.collapsible-toggle-inline {
-    color: var(--text);
 }
 
 .collapsible-toggle-copy {
@@ -1399,23 +1426,17 @@ body::before {
     min-height: 24px;
     padding: 0 9px;
     border-radius: 999px;
-    background: rgba(37, 99, 235, 0.10);
-    border: 1px solid rgba(37, 99, 235, 0.12);
-    color: #2b5db1;
+    background: var(--step-badge-bg);
+    border: 1px solid var(--step-badge-border);
+    color: var(--step-title-color);
     font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.1em;
     text-transform: uppercase;
 }
 
-.collapsible-toggle-hero .collapsible-step-badge {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.16);
-    color: rgba(255, 255, 255, 0.92);
-}
-
 .collapsible-toggle-kicker {
-    color: var(--text-strong);
+    color: var(--step-title-color);
     font-size: 0.98rem;
     font-weight: 800;
     line-height: 1.25;
@@ -1423,12 +1444,8 @@ body::before {
     letter-spacing: -0.02em;
 }
 
-.collapsible-toggle-hero .collapsible-toggle-kicker {
-    color: rgba(255, 255, 255, 0.94);
-}
-
 .collapsible-toggle-title {
-    color: var(--muted);
+    color: var(--step-text-color);
     font-size: 0.92rem;
     font-weight: 500;
     line-height: 1.45;
@@ -1436,81 +1453,17 @@ body::before {
     font-family: var(--font-body);
 }
 
-.collapsible-toggle-hero .collapsible-toggle-title {
-    color: rgba(255, 255, 255, 0.72);
-}
-
 .collapsible-toggle-icon {
     position: relative;
     width: 34px;
     height: 34px;
     flex: 0 0 auto;
-    color: currentColor;
+    color: var(--step-arrow-color);
     opacity: 0.86;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.42);
-    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: var(--step-arrow-bg);
+    border: 1px solid var(--step-arrow-border);
     transition: transform 0.22s ease, opacity 0.22s ease, color 0.22s ease, filter 0.22s ease, background 0.22s ease, border-color 0.22s ease;
-}
-
-:root:not([data-theme="dark"]) .collapsible-toggle {
-    color: var(--text);
-}
-
-:root:not([data-theme="dark"]) .collapsible-toggle-kicker {
-    color: #132844;
-}
-
-:root:not([data-theme="dark"]) .collapsible-toggle-title {
-    color: #5f7188;
-}
-
-:root:not([data-theme="dark"]) .collapsible-step-badge {
-    background: rgba(36, 87, 214, 0.10);
-    border-color: rgba(36, 87, 214, 0.18);
-    color: #2c5db0;
-}
-
-:root:not([data-theme="dark"]) .collapsible-toggle-icon {
-    background: rgba(255, 255, 255, 0.72);
-    border-color: rgba(148, 163, 184, 0.20);
-    color: #355a96;
-}
-
-:root:not([data-theme="dark"]) .collapsible-toggle:hover .collapsible-toggle-icon {
-    background: rgba(255, 255, 255, 0.9);
-    border-color: rgba(36, 87, 214, 0.18);
-    color: #214e98;
-}
-
-:root:not([data-theme="dark"]) .collapsible-panel-hero .collapsible-toggle-hero {
-    color: var(--text);
-}
-
-:root:not([data-theme="dark"]) .collapsible-panel-hero .collapsible-toggle-hero .collapsible-step-badge {
-    background: rgba(36, 87, 214, 0.10);
-    border-color: rgba(36, 87, 214, 0.18);
-    color: #2c5db0;
-}
-
-:root:not([data-theme="dark"]) .collapsible-panel-hero .collapsible-toggle-hero .collapsible-toggle-kicker {
-    color: #10243d;
-}
-
-:root:not([data-theme="dark"]) .collapsible-panel-hero .collapsible-toggle-hero .collapsible-toggle-title {
-    color: #5b6e86;
-}
-
-:root:not([data-theme="dark"]) .collapsible-panel-hero .collapsible-toggle-hero .collapsible-toggle-icon {
-    background: rgba(255, 255, 255, 0.78);
-    border-color: rgba(148, 163, 184, 0.18);
-    color: #355a96;
-}
-
-:root:not([data-theme="dark"]) .collapsible-panel-hero .collapsible-toggle-hero:hover .collapsible-toggle-icon {
-    background: rgba(255, 255, 255, 0.94);
-    border-color: rgba(36, 87, 214, 0.18);
-    color: #214e98;
 }
 
 .collapsible-toggle-icon::before {
@@ -1524,8 +1477,9 @@ body::before {
 
 .collapsible-toggle:hover .collapsible-toggle-icon {
     opacity: 1;
-    background: rgba(255, 255, 255, 0.7);
-    border-color: rgba(59, 130, 246, 0.18);
+    background: var(--step-arrow-bg-hover);
+    border-color: var(--step-badge-border);
+    color: var(--step-arrow-color-hover);
 }
 
 .collapsible-panel.is-collapsed .collapsible-toggle-icon {
@@ -1634,7 +1588,7 @@ body::before {
 }
 
 .collapsible-panel.is-expanded .collapsible-toggle {
-    border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+    border-bottom: 1px solid var(--step-card-border);
 }
 
 :root[data-theme="dark"] .collapsible-panel.is-collapsed {
@@ -1676,52 +1630,10 @@ body::before {
     color: #bfdbfe;
 }
 
-:root[data-theme="dark"] .collapsible-toggle-kicker {
-    color: #e5edf8;
-}
-
-:root[data-theme="dark"] .collapsible-toggle-title {
-    color: #adc0d4;
-}
-
-:root[data-theme="dark"] .collapsible-step-badge {
-    background: rgba(109, 168, 255, 0.12);
-    border-color: rgba(109, 168, 255, 0.18);
-    color: #cfe1ff;
-}
-
-:root[data-theme="dark"] .collapsible-toggle-icon {
-    background: rgba(19, 31, 52, 0.78);
-    border-color: rgba(148, 163, 184, 0.18);
-    color: #cfe1ff;
-}
-
-:root[data-theme="dark"] .collapsible-toggle:hover .collapsible-toggle-icon {
-    background: rgba(24, 39, 63, 0.92);
-    border-color: rgba(109, 168, 255, 0.18);
-    color: #e8f1ff;
-}
-
-:root[data-theme="dark"] .collapsible-step-badge {
-    background: rgba(96, 165, 250, 0.12);
-    border-color: rgba(96, 165, 250, 0.16);
-    color: #bfdbfe;
-}
-
 :root[data-theme="dark"] .collapsible-panel.is-collapsed .collapsible-step-badge {
     background: rgba(96, 165, 250, 0.12);
     border-color: rgba(96, 165, 250, 0.22);
     color: #bfdbfe;
-}
-
-:root[data-theme="dark"] .collapsible-toggle-icon {
-    background: rgba(15, 23, 42, 0.46);
-    border-color: rgba(148, 163, 184, 0.14);
-}
-
-:root[data-theme="dark"] .collapsible-toggle:hover .collapsible-toggle-icon {
-    background: rgba(30, 41, 59, 0.72);
-    border-color: rgba(96, 165, 250, 0.20);
 }
 
 .table-shell > .collapsible-panel-inline:first-of-type {
@@ -1777,10 +1689,6 @@ body::before {
     box-shadow: 0 18px 38px rgba(15, 23, 42, 0.10);
 }
 
-.collapsible-panel-workspace .collapsible-toggle-title {
-    color: #102a50;
-}
-
 :root[data-theme="dark"] .collapsible-panel-workspace .collapsible-toggle-title,
 :root[data-theme="dark"] .workspace-filter-block .collapsible-toggle-title,
 :root[data-theme="dark"] .filter-panel-copy,
@@ -1797,10 +1705,6 @@ body::before {
 :root[data-theme="dark"] .demo-cta-copy,
 :root[data-theme="dark"] .demo-note {
     color: var(--text-secondary);
-}
-
-:root[data-theme="dark"] .collapsible-toggle-title {
-    color: #b6c3d4;
 }
 
 :root[data-theme="dark"] .search-input-shell,
@@ -2486,13 +2390,6 @@ body::before {
 .custom-file-label,
 .secondary-btn,
 .filter-btn {
-    border: 1px solid var(--line-strong);
-    background: linear-gradient(180deg, var(--surface-elevated), var(--surface-soft));
-    color: var(--text);
-    box-shadow: var(--shadow-soft);
-}
-
-.theme-toggle {
     border: 1px solid var(--line-strong);
     background: linear-gradient(180deg, var(--surface-elevated), var(--surface-soft));
     color: var(--text);

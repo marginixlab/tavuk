@@ -1,11 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Purchase Price Analyzer</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="{{ url_for('static', path='/js/theme-init.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}">
 </head>
 <body>
@@ -33,7 +32,6 @@
             <div class="header-actions">
                 <button id="guidePanelToggle" class="secondary-btn workspace-toggle-btn" type="button" hidden>Guide</button>
                 <button id="notesPanelToggle" class="secondary-btn workspace-toggle-btn" type="button" hidden>Notes</button>
-                <button id="themeToggle" class="secondary-btn theme-toggle" type="button" aria-label="Toggle theme">Dark Mode</button>
                 <button id="logoutButton" class="secondary-btn" type="button" hidden>Log Out</button>
             </div>
         </header>
@@ -1129,7 +1127,6 @@
         </section>
     </div>
 
-    <script src="{{ url_for('static', path='/js/theme.js') }}"></script>
     <script src="{{ url_for('static', path='/js/access-code.js') }}"></script>
     <script src="{{ url_for('static', path='/js/charts.js') }}"></script>
     <script src="{{ url_for('static', path='/js/table.js') }}"></script>
