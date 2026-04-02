@@ -18,6 +18,19 @@
     const QUOTE_COMPARE_SCROLL_KEY = "quote_compare_scroll_v1";
     const QUOTE_COMPARE_STATE_KEY = "quote_compare_state_v1";
     const QUOTE_COMPARE_ACTIVE_SESSION_KEY = "quote_compare_active_session_v1";
+    const QUOTE_COMPARE_HISTORY_COLUMNS_KEY = "quote_compare_history_columns_v1";
+    const QUOTE_COMPARE_HISTORY_COLUMNS_ORDER_KEY = "quote_compare_history_columns_order_v1";
+    const HISTORY_COLUMN_DEFINITIONS = [
+        { key: "quoteDate", label: "Date", essential: true, headerClassName: "qc2-history-cell-date", cellClassName: "qc2-history-cell-date", render: (row) => escapeHtml(formatDate(row.quoteDate || row.createdAt)) },
+        { key: "productName", label: "Product", essential: true, headerClassName: "qc2-history-cell-product", cellClassName: "qc2-history-cell-product", render: (row) => escapeHtml(row.productName) },
+        { key: "supplier", label: "Supplier", essential: true, headerClassName: "qc2-history-cell-supplier", cellClassName: "qc2-history-cell-supplier", render: (row) => escapeHtml(row.supplier) },
+        { key: "unit", label: "Unit", essential: false, headerClassName: "qc2-history-cell-unit", cellClassName: "qc2-history-cell-unit", render: (row) => escapeHtml(row.unit || "-") },
+        { key: "quantity", label: "Qty", essential: false, headerClassName: "qc2-history-cell-quantity", cellClassName: "qc2-history-cell-quantity", render: (row) => escapeHtml(String(row.quantity || 0)) },
+        { key: "unitPrice", label: "Unit Price", essential: false, headerClassName: "qc2-history-cell-unitPrice", cellClassName: "qc2-history-cell-unitPrice", render: (row) => escapeHtml(formatCurrency(row.unitPrice, row.currency)) },
+        { key: "totalPrice", label: "Total", essential: false, headerClassName: "qc2-history-cell-totalPrice", cellClassName: "qc2-history-cell-totalPrice", render: (row) => escapeHtml(formatCurrency(row.totalPrice, row.currency)) },
+        { key: "changeValue", label: "Change", essential: false, headerClassName: "qc2-history-cell-changeValue", cellClassName: "qc2-history-cell-changeValue", toneClassName: (row) => row.changeValue == null ? "" : row.changeValue > 0 ? "qc2-change-negative" : row.changeValue < 0 ? "qc2-change-positive" : "", render: (row) => row.changeValue == null ? "--" : escapeHtml(formatCurrency(row.changeValue, row.currency)) },
+        { key: "changePercent", label: "Change %", essential: false, headerClassName: "qc2-history-cell-changePercent", cellClassName: "qc2-history-cell-changePercent", toneClassName: (row) => row.changePercent == null ? "" : row.changePercent > 0 ? "qc2-change-negative" : row.changePercent < 0 ? "qc2-change-positive" : "", render: (row) => row.changePercent == null ? "--" : escapeHtml(formatPercent(row.changePercent)) }
+    ];
     const OPPORTUNITY_CARD_PALETTE = [
         {
             border: "rgba(96, 165, 250, 0.24)",
@@ -164,6 +177,676 @@
         writeScrollPosition(elements, currentTop + delta);
     }
 
+    function getDefaultHistoryColumnKeys() {
+        return HISTORY_COLUMN_DEFINITIONS.map((column) => column.key);
+    }
+
+    function getDefaultHistorySort() {
+        return { key: "", direction: null };
+    }
+
+    function normalizeHistoryColumnKeys(value) {
+        const validKeys = new Set(getDefaultHistoryColumnKeys());
+        const essentialKeys = HISTORY_COLUMN_DEFINITIONS.filter((column) => column.essential).map((column) => column.key);
+        const requestedKeys = Array.isArray(value) ? value.filter((key) => validKeys.has(key)) : [];
+        const requestedSet = new Set(requestedKeys);
+        essentialKeys.forEach((key) => requestedSet.add(key));
+        return HISTORY_COLUMN_DEFINITIONS
+            .map((column) => column.key)
+            .filter((key) => requestedSet.has(key));
+    }
+
+    function normalizeHistoryColumnOrder(value) {
+        const validKeys = new Set(getDefaultHistoryColumnKeys());
+        const requestedKeys = Array.isArray(value) ? value.filter((key) => validKeys.has(key)) : [];
+        const orderedKeys = [];
+        requestedKeys.forEach((key) => {
+            if (!orderedKeys.includes(key)) {
+                orderedKeys.push(key);
+            }
+        });
+        getDefaultHistoryColumnKeys().forEach((key) => {
+            if (!orderedKeys.includes(key)) {
+                orderedKeys.push(key);
+            }
+        });
+        return orderedKeys;
+    }
+
+    function normalizeHistorySort(value) {
+        const validKeys = new Set(getDefaultHistoryColumnKeys());
+        if (!value || typeof value !== "object") return getDefaultHistorySort();
+        const key = validKeys.has(value.key) ? value.key : "";
+        const direction = value.direction === "asc" || value.direction === "desc" ? value.direction : null;
+        if (!key || !direction) {
+            return getDefaultHistorySort();
+        }
+        return { key, direction };
+    }
+
+    function persistHistoryColumnPreferences(state) {
+        try {
+            localStorage.setItem(QUOTE_COMPARE_HISTORY_COLUMNS_KEY, JSON.stringify({
+                visibleKeys: normalizeHistoryColumnKeys(state.historyColumnVisibility)
+            }));
+        } catch (error) {
+            // Ignore storage failures.
+        }
+    }
+
+    function hydrateHistoryColumnPreferences(state, snapshot) {
+        if (!snapshot || typeof snapshot !== "object") return;
+        state.historyColumnVisibility = normalizeHistoryColumnKeys(snapshot.visibleKeys);
+    }
+
+    function restoreHistoryColumnPreferences(state) {
+        try {
+            const snapshot = JSON.parse(localStorage.getItem(QUOTE_COMPARE_HISTORY_COLUMNS_KEY) || "null");
+            hydrateHistoryColumnPreferences(state, snapshot);
+        } catch (error) {
+            // Ignore invalid preference payloads.
+        }
+    }
+
+    function persistHistoryColumnOrder(state) {
+        try {
+            localStorage.setItem(QUOTE_COMPARE_HISTORY_COLUMNS_ORDER_KEY, JSON.stringify({
+                order: normalizeHistoryColumnOrder(state.historyColumnOrder)
+            }));
+        } catch (error) {
+            // Ignore storage failures.
+        }
+    }
+
+    function restoreHistoryColumnOrder(state) {
+        try {
+            const snapshot = JSON.parse(localStorage.getItem(QUOTE_COMPARE_HISTORY_COLUMNS_ORDER_KEY) || "null");
+            state.historyColumnOrder = normalizeHistoryColumnOrder(snapshot?.order || state.historyColumnOrder);
+        } catch (error) {
+            // Ignore invalid preference payloads.
+        }
+    }
+
+    function getVisibleHistoryColumns(state) {
+        const visibleKeys = new Set(normalizeHistoryColumnKeys(state.historyColumnVisibility));
+        const orderedKeys = normalizeHistoryColumnOrder(state.historyColumnOrder);
+        return orderedKeys
+            .map((key) => HISTORY_COLUMN_DEFINITIONS.find((column) => column.key === key))
+            .filter((column) => column && visibleKeys.has(column.key));
+    }
+
+    function setHistoryColumnVisibility(state, columnKey, isVisible) {
+        const column = HISTORY_COLUMN_DEFINITIONS.find((item) => item.key === columnKey);
+        if (!column || column.essential) return;
+        const current = new Set(normalizeHistoryColumnKeys(state.historyColumnVisibility));
+        if (isVisible) {
+            current.add(columnKey);
+        } else {
+            current.delete(columnKey);
+        }
+        state.historyColumnVisibility = HISTORY_COLUMN_DEFINITIONS
+            .map((item) => item.key)
+            .filter((key) => current.has(key));
+        persistHistoryColumnPreferences(state);
+    }
+
+    function cycleHistorySort(state, columnKey) {
+        const currentSort = normalizeHistorySort(state.historySort);
+        if (currentSort.key !== columnKey) {
+            state.historySort = { key: columnKey, direction: "asc" };
+            return;
+        }
+        if (currentSort.direction === "asc") {
+            state.historySort = { key: columnKey, direction: "desc" };
+            return;
+        }
+        state.historySort = getDefaultHistorySort();
+    }
+
+    function getHistorySortIndicator(state, columnKey) {
+        const currentSort = normalizeHistorySort(state.historySort);
+        if (currentSort.key !== columnKey || !currentSort.direction) return "";
+        return currentSort.direction === "asc" ? " ↑" : " ↓";
+    }
+
+    function getHistorySortValue(row, key) {
+        switch (key) {
+            case "quoteDate":
+                return Number(row.effectiveTimestamp) || 0;
+            case "productName":
+                return String(row.productName || "");
+            case "supplier":
+                return String(row.supplier || "");
+            case "unit":
+                return String(row.unit || "");
+            case "quantity":
+                return Number(row.quantity);
+            case "unitPrice":
+                return Number(row.unitPrice);
+            case "totalPrice":
+                return Number(row.totalPrice);
+            case "changeValue":
+                return Number(row.changeValue);
+            case "changePercent":
+                return Number(row.changePercent);
+            default:
+                return null;
+        }
+    }
+
+    function compareHistorySortRows(left, right, key, direction) {
+        const leftValue = getHistorySortValue(left, key);
+        const rightValue = getHistorySortValue(right, key);
+        const leftMissing = leftValue == null || leftValue === "" || Number.isNaN(leftValue);
+        const rightMissing = rightValue == null || rightValue === "" || Number.isNaN(rightValue);
+
+        if (leftMissing && rightMissing) return 0;
+        if (leftMissing) return 1;
+        if (rightMissing) return -1;
+
+        let comparison = 0;
+        if (typeof leftValue === "string" || typeof rightValue === "string") {
+            comparison = String(leftValue).localeCompare(String(rightValue), undefined, { sensitivity: "base" });
+        } else {
+            comparison = Number(leftValue) - Number(rightValue);
+        }
+
+        if (comparison === 0) return 0;
+        return direction === "desc" ? comparison * -1 : comparison;
+    }
+
+    function getHistorySortIndicator(state, columnKey) {
+        const currentSort = normalizeHistorySort(state.historySort);
+        if (currentSort.key !== columnKey || !currentSort.direction) return "";
+        return currentSort.direction === "asc" ? " ↑" : " ↓";
+    }
+
+    function getHistorySortValue(row, key) {
+        switch (key) {
+            case "quoteDate":
+                return Number.isFinite(row.effectiveTimestamp) ? row.effectiveTimestamp : null;
+            case "productName":
+                return String(row.productName || "");
+            case "supplier":
+                return String(row.supplier || "");
+            case "unit":
+                return String(row.unit || "");
+            case "quantity":
+                return Number(row.quantity);
+            case "unitPrice":
+                return Number(row.unitPrice);
+            case "totalPrice":
+                return Number(row.totalPrice);
+            case "changeValue":
+                return Number(row.changeValue);
+            case "changePercent":
+                return Number(row.changePercent);
+            default:
+                return null;
+        }
+    }
+
+    function getHistoryDisplayRows(state, rows) {
+        const currentSort = normalizeHistorySort(state.historySort);
+        if (!currentSort.key || !currentSort.direction) {
+            return rows;
+        }
+        return rows
+            .map((row, index) => ({ row, index }))
+            .sort((left, right) => {
+                const comparison = compareHistorySortRows(left.row, right.row, currentSort.key, currentSort.direction);
+                if (comparison !== 0) return comparison;
+                return left.index - right.index;
+            })
+            .map((item) => item.row);
+    }
+
+    function getHistorySeriesKey(productName, unit) {
+        return `${String(productName || "").trim()}__${String(unit || "").trim()}`;
+    }
+
+    function getHistorySeriesRows(rows, seriesKey) {
+        if (!seriesKey) return [];
+        return (Array.isArray(rows) ? rows : []).filter((row) => getHistorySeriesKey(row.productName, row.unit) === seriesKey);
+    }
+
+    function getHistoryFullSeriesRows(state, seriesKey) {
+        return getHistorySeriesRows(getHistoryDataset(state), seriesKey)
+            .slice()
+            .sort((left, right) => {
+                if (left.effectiveTimestamp !== right.effectiveTimestamp) return left.effectiveTimestamp - right.effectiveTimestamp;
+                return left.supplier.localeCompare(right.supplier);
+            });
+    }
+
+    function setHistorySelectedSeries(state, rows, seriesKey, rowId = "") {
+        const selectedRows = getHistoryFullSeriesRows(state, seriesKey);
+        state.historySelectedSeriesKey = seriesKey || "";
+        state.historySelectedRows = selectedRows;
+        state.historySelectedProductName = selectedRows[0]?.productName || "";
+        state.historySelectedUnit = selectedRows[0]?.unit || "";
+        state.historySelectedRowId = rowId || "";
+    }
+
+    function openHistoryDetailModal(state, seriesRows, useFullSeries = false) {
+        const rows = Array.isArray(seriesRows) ? seriesRows.slice().sort((left, right) => {
+            if (left.effectiveTimestamp !== right.effectiveTimestamp) return left.effectiveTimestamp - right.effectiveTimestamp;
+            return left.supplier.localeCompare(right.supplier);
+        }) : [];
+        state.historyDetailModalOpen = rows.length > 0;
+        state.historyDetailModalSeries = rows.length ? {
+            key: getHistorySeriesKey(rows[0].productName, rows[0].unit),
+            productName: rows[0].productName,
+            unit: rows[0].unit,
+            rows,
+            usesFullSeries: Boolean(useFullSeries)
+        } : null;
+    }
+
+    function closeHistoryDetailModal(state) {
+        state.historyDetailModalOpen = false;
+        state.historyDetailModalSeries = null;
+    }
+
+    function getHistoryTableScroller(elements) {
+        return elements.app?.querySelector("[data-qc-history-table-scroll]") || null;
+    }
+
+    function scheduleHistoryDetailChartRender(elements, state) {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                renderHistoryDetailChart(elements, state);
+            });
+        });
+    }
+
+    function restoreHistoryTablePosition(elements, pageScrollTop, tableScrollTop) {
+        requestAnimationFrame(() => {
+            writeScrollPosition(elements, pageScrollTop);
+            const nextTableScroller = getHistoryTableScroller(elements);
+            if (nextTableScroller) {
+                nextTableScroller.scrollTop = tableScrollTop;
+            }
+        });
+    }
+
+    function shouldScrollToHistoryTrend(elements) {
+        const trendSection = elements.app?.querySelector("[data-qc-history-trend-content]");
+        if (!trendSection) return false;
+        const rect = trendSection.getBoundingClientRect();
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        return rect.top < 120 || rect.bottom > viewportHeight - 80;
+    }
+
+    function clearHistorySelectedSeries(state) {
+        state.historySelectedSeriesKey = "";
+        state.historySelectedProductName = "";
+        state.historySelectedUnit = "";
+        state.historySelectedRowId = "";
+        state.historySelectedRows = [];
+    }
+
+    function getHistoryVolatilityLabel(rows) {
+        const prices = rows.map((row) => Number(row.unitPrice)).filter(Number.isFinite);
+        if (!prices.length) return "Low";
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+        if (!minPrice) return "Low";
+        const volatilityRatio = (maxPrice - minPrice) / minPrice;
+        if (volatilityRatio >= 0.2) return "High";
+        if (volatilityRatio >= 0.08) return "Medium";
+        return "Low";
+    }
+
+    function buildHistorySeriesSummary(rows) {
+        if (!rows.length) {
+            return {
+                latestUnitPrice: null,
+                lowestUnitPrice: null,
+                highestUnitPrice: null,
+                netChange: null,
+                netChangePercent: null,
+                averageUnitPrice: null,
+                movementCount: 0,
+                supplierCount: 0,
+                firstDate: "",
+                latestDate: ""
+            };
+        }
+        const sortedRows = rows.slice().sort((left, right) => {
+            if (left.effectiveTimestamp !== right.effectiveTimestamp) return left.effectiveTimestamp - right.effectiveTimestamp;
+            return left.supplier.localeCompare(right.supplier);
+        });
+        const prices = sortedRows.map((row) => Number(row.unitPrice)).filter(Number.isFinite);
+        const first = sortedRows[0];
+        const latest = sortedRows[sortedRows.length - 1];
+        const lowestUnitPrice = prices.length ? Math.min(...prices) : null;
+        const highestUnitPrice = prices.length ? Math.max(...prices) : null;
+        const averageUnitPrice = prices.length ? prices.reduce((sum, value) => sum + value, 0) / prices.length : null;
+        const netChange = Number.isFinite(first.unitPrice) && Number.isFinite(latest.unitPrice) ? latest.unitPrice - first.unitPrice : null;
+        const netChangePercent = netChange != null && first.unitPrice ? (netChange / first.unitPrice) * 100 : null;
+        return {
+            latestUnitPrice: latest.unitPrice,
+            lowestUnitPrice,
+            highestUnitPrice,
+            netChange,
+            netChangePercent,
+            averageUnitPrice,
+            movementCount: sortedRows.length,
+            supplierCount: new Set(sortedRows.map((row) => row.supplier).filter(Boolean)).size,
+            firstDate: formatDate(first.quoteDate || first.createdAt),
+            latestDate: formatDate(latest.quoteDate || latest.createdAt)
+        };
+    }
+
+    function buildHistorySeriesInsights(rows) {
+        if (!rows.length) return [];
+        const summary = buildHistorySeriesSummary(rows);
+        const sortedRows = rows.slice().sort((left, right) => left.effectiveTimestamp - right.effectiveTimestamp);
+        const first = sortedRows[0];
+        const latest = sortedRows[sortedRows.length - 1];
+        const lowestRow = sortedRows.reduce((best, row) => (best == null || row.unitPrice < best.unitPrice ? row : best), null);
+        return [
+            latest && first && summary.netChangePercent != null
+                ? `Latest price is ${formatPercent(summary.netChangePercent)} ${summary.netChange >= 0 ? "above" : "below"} the first visible quote.`
+                : "Not enough valid price points to calculate net change.",
+            lowestRow
+                ? `Lowest visible price came from ${lowestRow.supplier || "Unknown supplier"} on ${formatDate(lowestRow.quoteDate || lowestRow.createdAt)}.`
+                : "Lowest visible price could not be determined.",
+            `Price volatility appears ${getHistoryVolatilityLabel(sortedRows).toLowerCase()} across the visible range.`,
+            `There are ${summary.supplierCount} suppliers in this series.`
+        ];
+    }
+
+    function renderHistoryDetailChartFallback(elements, message) {
+        const shell = elements.app?.querySelector(".qc2-history-chart-shell");
+        if (!shell) return;
+        shell.innerHTML = `<div class="decision-list-empty">${escapeHtml(message)}</div>`;
+    }
+
+    function renderHistoryDetailSvgChart(elements, rows) {
+        const shell = elements.app?.querySelector(".qc2-history-chart-shell");
+        if (!shell || !rows.length) return;
+
+        const prices = rows.map((row) => Number(row.unitPrice)).filter(Number.isFinite);
+        if (!prices.length) {
+            renderHistoryDetailChartFallback(elements, "Chart unavailable for this series.");
+            return;
+        }
+
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+        const priceRange = maxPrice - minPrice || 1;
+        const width = 900;
+        const height = 320;
+        const paddingX = 36;
+        const paddingY = 28;
+        const innerWidth = width - paddingX * 2;
+        const innerHeight = height - paddingY * 2;
+        const stepX = rows.length > 1 ? innerWidth / (rows.length - 1) : 0;
+        const points = rows.map((row, index) => {
+            const value = Number(row.unitPrice);
+            const x = paddingX + (stepX * index);
+            const y = paddingY + innerHeight - (((value - minPrice) / priceRange) * innerHeight);
+            return { x, y, value, row };
+        });
+        const linePath = points
+            .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+            .join(" ");
+        const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${(height - paddingY).toFixed(2)} L ${points[0].x.toFixed(2)} ${(height - paddingY).toFixed(2)} Z`;
+
+        shell.innerHTML = `
+            <svg class="qc2-history-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Selected product unit price trend chart" preserveAspectRatio="none">
+                <defs>
+                    <linearGradient id="qc2HistoryDetailLine" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="rgba(147, 197, 253, 1)" />
+                        <stop offset="100%" stop-color="rgba(56, 189, 248, 0.32)" />
+                    </linearGradient>
+                    <linearGradient id="qc2HistoryDetailFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="rgba(96, 165, 250, 0.18)" />
+                        <stop offset="100%" stop-color="rgba(56, 189, 248, 0.02)" />
+                    </linearGradient>
+                </defs>
+                <path d="${areaPath}" fill="url(#qc2HistoryDetailFill)"></path>
+                <path d="${linePath}" fill="none" stroke="url(#qc2HistoryDetailLine)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
+                ${points.map((point) => `
+                    <g>
+                        <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4" fill="#dbeafe" stroke="#ffffff" stroke-width="2"></circle>
+                        <title>${escapeHtml(`${formatDate(point.row.effectiveDate)} | ${point.row.supplier || "Supplier missing"} | ${formatCurrency(point.value, point.row.currency)}`)}</title>
+                    </g>
+                `).join("")}
+            </svg>
+        `;
+    }
+
+    function renderHistoryDetailChart(elements, state, attempt = 0) {
+        const modalSeriesRows = Array.isArray(state.historyDetailModalSeries?.rows) ? state.historyDetailModalSeries.rows : [];
+        if (!state.historyDetailModalOpen || !modalSeriesRows.length) return;
+        const validRows = modalSeriesRows
+            .filter((row) => row.effectiveDate && Number.isFinite(Number(row.unitPrice)))
+            .sort((left, right) => {
+                const leftTime = new Date(left.effectiveDate).getTime();
+                const rightTime = new Date(right.effectiveDate).getTime();
+                if (leftTime !== rightTime) return leftTime - rightTime;
+                return left.supplier.localeCompare(right.supplier);
+            });
+        if (!validRows.length) {
+            renderHistoryDetailChartFallback(elements, "Chart unavailable for this series.");
+            return;
+        }
+        if (typeof Chart === "undefined") {
+            if (attempt < 6) {
+                requestAnimationFrame(() => renderHistoryDetailChart(elements, state, attempt + 1));
+            } else {
+                renderHistoryDetailSvgChart(elements, validRows);
+            }
+            return;
+        }
+        const canvas = elements.app?.querySelector("[data-qc-history-detail-chart]");
+        if (!canvas) {
+            if (attempt < 6) {
+                requestAnimationFrame(() => renderHistoryDetailChart(elements, state, attempt + 1));
+            } else {
+                renderHistoryDetailSvgChart(elements, validRows);
+            }
+            return;
+        }
+        const context = canvas.getContext("2d");
+        if (!context) {
+            if (attempt < 6) {
+                requestAnimationFrame(() => renderHistoryDetailChart(elements, state, attempt + 1));
+            } else {
+                renderHistoryDetailSvgChart(elements, validRows);
+            }
+            return;
+        }
+        if ((!canvas.clientWidth || !canvas.clientHeight) && attempt < 6) {
+            requestAnimationFrame(() => renderHistoryDetailChart(elements, state, attempt + 1));
+            return;
+        }
+        if (window.qcHistoryDetailChartInstance) {
+            window.qcHistoryDetailChartInstance.destroy();
+            window.qcHistoryDetailChartInstance = null;
+        }
+        if (state.historyDetailChart) {
+            state.historyDetailChart.destroy();
+            state.historyDetailChart = null;
+        }
+        canvas.style.width = "100%";
+        canvas.style.height = "100%";
+        const themeText = "rgba(226, 232, 240, 0.84)";
+        const themeGrid = "rgba(148, 163, 184, 0.10)";
+        state.historyDetailChart = new Chart(context, {
+            type: "line",
+            data: {
+                labels: validRows.map((row) => formatDate(row.effectiveDate)),
+                datasets: [{
+                    label: "Unit Price",
+                    data: validRows.map((row) => Number(row.unitPrice)),
+                    tension: 0.35,
+                    borderWidth: 3,
+                    pointRadius: 3,
+                    pointHoverRadius: 6,
+                    pointBorderWidth: 2,
+                    pointBackgroundColor: "#dbeafe",
+                    pointBorderColor: "#ffffff",
+                    pointHoverBackgroundColor: "#ffffff",
+                    pointHoverBorderColor: "#7dd3fc",
+                    fill: true,
+                    borderColor(chartContext) {
+                        const { chart } = chartContext;
+                        const area = chart.chartArea;
+                        if (!area) return "#7dd3fc";
+                        const gradient = chart.ctx.createLinearGradient(area.left, area.top, area.left, area.bottom);
+                        gradient.addColorStop(0, "rgba(147, 197, 253, 1)");
+                        gradient.addColorStop(1, "rgba(56, 189, 248, 0.28)");
+                        return gradient;
+                    },
+                    backgroundColor(chartContext) {
+                        const { chart } = chartContext;
+                        const area = chart.chartArea;
+                        if (!area) return "rgba(56, 189, 248, 0.12)";
+                        const gradient = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+                        gradient.addColorStop(0, "rgba(96, 165, 250, 0.20)");
+                        gradient.addColorStop(1, "rgba(56, 189, 248, 0.02)");
+                        return gradient;
+                    }
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: {
+                    duration: 720,
+                    easing: "easeOutQuart"
+                },
+                interaction: {
+                    mode: "nearest",
+                    intersect: false
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        displayColors: false,
+                        backgroundColor: "rgba(15, 23, 42, 0.96)",
+                        borderColor: "rgba(125, 167, 255, 0.20)",
+                        borderWidth: 1,
+                        padding: 12,
+                        titleColor: "#f8fafc",
+                        bodyColor: "#dbeafe",
+                        callbacks: {
+                            title(items) {
+                                return items[0]?.label || "";
+                            },
+                            label(context) {
+                                const row = validRows[context.dataIndex];
+                                return [
+                                    `Supplier: ${row.supplier || "Supplier missing"}`,
+                                    `Unit Price: ${formatCurrency(row.unitPrice, row.currency)}`,
+                                    `Quantity: ${row.quantity || 0}`,
+                                    `Total: ${formatCurrency(row.totalPrice, row.currency)}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: themeGrid,
+                            drawBorder: false
+                        },
+                        ticks: {
+                            color: themeText,
+                            maxRotation: 0,
+                            autoSkip: true
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: themeGrid,
+                            display: false
+                        },
+                        ticks: {
+                            color: themeText,
+                            callback(value) {
+                                return formatCurrency(Number(value), validRows[validRows.length - 1]?.currency || "USD");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        window.qcHistoryDetailChartInstance = state.historyDetailChart;
+    }
+
+    function renderHistorySeriesChart(rows) {
+        if (!rows.length) {
+            return '<div class="decision-list-empty">No movement points are available for this series.</div>';
+        }
+        return `
+            <div class="qc2-history-chart-shell">
+                <canvas class="qc2-history-chart" data-qc-history-detail-chart aria-label="Selected product unit price trend chart"></canvas>
+            </div>
+        `;
+    }
+
+    function getHistoryHeaderSortDirection(state, columnKey) {
+        const currentSort = normalizeHistorySort(state.historySort);
+        if (currentSort.key !== columnKey || !currentSort.direction) return null;
+        return currentSort.direction;
+    }
+
+    function getHistoryHeaderSortIndicator(state, columnKey) {
+        const direction = getHistoryHeaderSortDirection(state, columnKey);
+        if (direction === "asc") return "↑";
+        if (direction === "desc") return "↓";
+        return "↕";
+    }
+
+    function getHistoryHeaderSortHint(state, columnKey) {
+        const direction = getHistoryHeaderSortDirection(state, columnKey);
+        if (direction === "asc") return "Sorted ascending";
+        if (direction === "desc") return "Sorted descending";
+        return "Click to sort";
+    }
+
+    function getHistoryHeaderAriaSort(state, columnKey) {
+        const direction = getHistoryHeaderSortDirection(state, columnKey);
+        if (direction === "asc") return "ascending";
+        if (direction === "desc") return "descending";
+        return "none";
+    }
+
+    function moveHistoryColumn(state, draggedKey, targetKey) {
+        if (!draggedKey || !targetKey || draggedKey === targetKey) return false;
+        const orderedKeys = normalizeHistoryColumnOrder(state.historyColumnOrder);
+        const draggedIndex = orderedKeys.indexOf(draggedKey);
+        const targetIndex = orderedKeys.indexOf(targetKey);
+        if (draggedIndex < 0 || targetIndex < 0) return false;
+        orderedKeys.splice(draggedIndex, 1);
+        orderedKeys.splice(targetIndex, 0, draggedKey);
+        state.historyColumnOrder = orderedKeys;
+        persistHistoryColumnOrder(state);
+        return true;
+    }
+
+    function scrollHistorySectionIntoView(elements) {
+        if (!elements.app) return;
+        const anchor = elements.app.querySelector('[data-qc-anchor="history-top"]');
+        if (!anchor) return;
+        const context = getScrollContext(elements);
+        if (context.type === "element") {
+            const containerRect = context.target.getBoundingClientRect();
+            const anchorRect = anchor.getBoundingClientRect();
+            const nextTop = context.target.scrollTop + (anchorRect.top - containerRect.top);
+            context.target.scrollTo({ top: Math.max(nextTop, 0), behavior: "auto" });
+            return;
+        }
+        const nextTop = (window.scrollY || context.target.scrollTop || 0) + anchor.getBoundingClientRect().top;
+        window.scrollTo({ top: Math.max(nextTop, 0), behavior: "auto" });
+    }
+
     function buildPersistedState(state) {
         return {
             currentScreen: state.currentScreen,
@@ -178,6 +861,15 @@
             selectedMappings: state.selectedMappings,
             activeSessionId: state.activeSessionId,
             historyFilters: state.historyFilters,
+            historyColumnVisibility: state.historyColumnVisibility,
+            historyColumnOrder: state.historyColumnOrder,
+            historySort: state.historySort,
+            historySelectedSeriesKey: state.historySelectedSeriesKey,
+            historySelectedProductName: state.historySelectedProductName,
+            historySelectedUnit: state.historySelectedUnit,
+            historySelectedRowId: state.historySelectedRowId,
+            historyDetailModalOpen: state.historyDetailModalOpen,
+            historyDetailModalSeries: state.historyDetailModalSeries,
             savedComparisons: state.savedComparisons,
             collapsedDecisionCards: state.collapsedDecisionCards,
             analysisTableFilter: state.analysisTableFilter,
@@ -245,6 +937,15 @@
         state.selectedMappings = snapshot.selectedMappings || state.selectedMappings;
         state.activeSessionId = snapshot.activeSessionId || state.activeSessionId;
         state.historyFilters = { ...state.historyFilters, ...(snapshot.historyFilters || {}) };
+        state.historyColumnVisibility = normalizeHistoryColumnKeys(snapshot.historyColumnVisibility || state.historyColumnVisibility);
+        state.historyColumnOrder = normalizeHistoryColumnOrder(snapshot.historyColumnOrder || state.historyColumnOrder);
+        state.historySort = normalizeHistorySort(snapshot.historySort || state.historySort);
+        state.historySelectedSeriesKey = snapshot.historySelectedSeriesKey || state.historySelectedSeriesKey;
+        state.historySelectedProductName = snapshot.historySelectedProductName || state.historySelectedProductName;
+        state.historySelectedUnit = snapshot.historySelectedUnit || state.historySelectedUnit;
+        state.historySelectedRowId = snapshot.historySelectedRowId || state.historySelectedRowId;
+        state.historyDetailModalOpen = Boolean(snapshot.historyDetailModalOpen);
+        state.historyDetailModalSeries = snapshot.historyDetailModalSeries || state.historyDetailModalSeries;
         state.savedComparisons = Array.isArray(snapshot.savedComparisons) ? snapshot.savedComparisons : state.savedComparisons;
         state.collapsedDecisionCards = snapshot.collapsedDecisionCards || state.collapsedDecisionCards;
         state.analysisTableFilter = snapshot.analysisTableFilter || state.analysisTableFilter;
@@ -255,6 +956,7 @@
         state.showOptimizedSummary = Boolean(snapshot.showOptimizedSummary);
         state.manualRows = Array.isArray(snapshot.manualRows) && snapshot.manualRows.length ? snapshot.manualRows : state.manualRows;
         state.status = snapshot.status || state.status;
+        state.qcHistoryData = buildHistoryDataset(state);
     }
 
     function restoreQuoteCompareSession(state) {
@@ -264,6 +966,11 @@
         } catch (error) {
             // Ignore invalid session payloads.
         }
+    }
+
+    function restoreHistoryUiPreferences(state) {
+        restoreHistoryColumnPreferences(state);
+        restoreHistoryColumnOrder(state);
     }
 
     function restoreQuoteCompareScroll(elements) {
@@ -464,6 +1171,7 @@
             isHistoryLoading: false,
             manualRows: [createEmptyManualRow()],
             savedComparisons: [],
+            qcHistoryData: [],
             hasLoadedSavedComparisons: false,
             collapsedDecisionCards: {},
             analysisTableFilter: "all",
@@ -472,6 +1180,19 @@
             showOpportunitySection: true,
             showFullComparison: false,
             showOptimizedSummary: false,
+            historyColumnVisibility: getDefaultHistoryColumnKeys(),
+            historyColumnOrder: getDefaultHistoryColumnKeys(),
+            historySort: getDefaultHistorySort(),
+            historyDrag: { key: "", suppressClick: false },
+            historySelectedSeriesKey: "",
+            historySelectedProductName: "",
+            historySelectedUnit: "",
+            historySelectedRowId: "",
+            historySelectedRows: [],
+            historyDetailModalOpen: false,
+            historyDetailModalSeries: null,
+            historyDetailChart: null,
+            historyRowClickTimer: null,
             historyFilters: {
                 product: "",
                 supplier: "",
@@ -674,22 +1395,12 @@
     }
 
     function buildManualPayload(state) {
-        const bids = state.manualRows
-            .map((row) => ({
-                supplier_name: String(row.supplier_name || "").trim(),
-                product_name: String(row.product_name || "").trim(),
-                unit: String(row.unit || "").trim(),
-                quantity: Number(row.quantity || 0),
-                unit_price: Number(row.unit_price || 0),
-                total_price: row.total_price ? Number(row.total_price || 0) : null,
-                quote_date: String(row.quote_date || "").trim() || null,
-                currency: String(row.currency || "USD").trim() || "USD",
-                delivery_time: String(row.delivery_time || "").trim(),
-                payment_term: String(row.payment_term || "").trim(),
-                valid_until: String(row.valid_until || "").trim() || null,
-                notes: String(row.notes || "").trim() || null
-            }))
-            .filter((row) => row.product_name && row.supplier_name && row.unit && row.quantity > 0 && row.unit_price > 0);
+        const incompleteTouchedRows = state.manualRows.filter((row) => isManualRowTouched(row) && getManualRowMissingFields(row).length > 0);
+        if (incompleteTouchedRows.length) {
+            throw new Error("Complete all required manual fields before starting analysis.");
+        }
+
+        const bids = getManualNormalizedRows(state);
 
         if (!bids.length) {
             throw new Error("Add at least one complete supplier offer before starting analysis.");
@@ -903,72 +1614,118 @@
         return Array.from(historyMap.values());
     }
 
-    function flattenHistoryRows(state) {
+    function normalizeHistoryText(value) {
+        return String(value == null ? "" : value).trim();
+    }
+
+    function isValidHistoryDimension(value) {
+        const normalized = normalizeHistoryText(value);
+        return normalized !== "" && normalized !== "-";
+    }
+
+    function buildHistoryDataset(state) {
         return getHistoryComparisons(state).flatMap((comparison) => {
             const comparisonCreatedAt = comparison.created_at || comparison.updated_at || "";
             const comparisonSourceType = comparison.source_type || "manual";
             return (comparison.bids || []).map((bid, index) => {
                 const quoteDate = bid.quote_date || bid.date || "";
                 const effectiveDate = parseDateValue(quoteDate) || parseDateValue(comparisonCreatedAt);
+                const productName = normalizeHistoryText(bid.product_name);
+                const supplier = normalizeHistoryText(bid.supplier_name);
                 return {
                     historyId: `${comparison.comparison_id || "comparison"}-${index}`,
                     comparisonId: comparison.comparison_id || "",
                     comparisonName: comparison.name || "Saved quotes",
-                    productName: String(bid.product_name || "").trim(),
-                    supplier: String(bid.supplier_name || "").trim(),
-                    unit: String(bid.unit || "").trim(),
+                    productName,
+                    supplier,
+                    unit: normalizeHistoryText(bid.unit),
                     quantity: Number(bid.quantity || 0),
                     unitPrice: Number(bid.unit_price || 0),
                     totalPrice: Number(bid.total_price || 0),
                     quoteDate,
-                    currency: String(bid.currency || "USD").trim() || "USD",
+                    currency: normalizeHistoryText(bid.currency || "USD") || "USD",
                     sourceType: comparisonSourceType,
                     createdAt: comparisonCreatedAt,
                     effectiveDate,
                     effectiveTimestamp: effectiveDate ? effectiveDate.getTime() : 0
                 };
             });
-        }).filter((row) => row.productName);
+        }).filter((row) => isValidHistoryDimension(row.productName) && isValidHistoryDimension(row.supplier));
+    }
+
+    function getHistoryDataset(state) {
+        if (!Array.isArray(state.qcHistoryData)) {
+            state.qcHistoryData = [];
+        }
+        if (!state.qcHistoryData.length) {
+            state.qcHistoryData = buildHistoryDataset(state);
+        }
+        return state.qcHistoryData;
+    }
+
+    function flattenHistoryRows(state) {
+        return getHistoryDataset(state);
+    }
+
+    function getHistoryFilterScope(state, { ignoreKey = "" } = {}) {
+        const product = ignoreKey === "product" ? "" : normalizeHistoryText(state.historyFilters.product);
+        const supplier = ignoreKey === "supplier" ? "" : normalizeHistoryText(state.historyFilters.supplier);
+        const startDate = ignoreKey === "dateFrom" ? null : parseDateValue(state.historyFilters.dateFrom, { startOfDay: true });
+        const endDate = ignoreKey === "dateTo" ? null : parseDateValue(state.historyFilters.dateTo, { endOfDay: true });
+
+        return getHistoryDataset(state).filter((row) => {
+            if (product && row.productName !== product) return false;
+            if (supplier && row.supplier !== supplier) return false;
+            if (startDate && row.effectiveDate && row.effectiveDate < startDate) return false;
+            if (endDate && row.effectiveDate && row.effectiveDate > endDate) return false;
+            return true;
+        });
     }
 
     function getHistoryFilterOptions(state, key) {
-        const historyRows = flattenHistoryRows(state);
         if (key === "product") {
-            return Array.from(new Set(historyRows.map((row) => row.productName)))
-                .sort((left, right) => left.localeCompare(right));
+            return Array.from(new Set(
+                getHistoryFilterScope(state, { ignoreKey: "product" })
+                    .map((row) => row.productName)
+                    .filter(isValidHistoryDimension)
+            )).sort((left, right) => left.localeCompare(right));
         }
         if (key === "supplier") {
             return Array.from(new Set(
-                historyRows
-                    .filter((row) => !state.historyFilters.product || row.productName === state.historyFilters.product)
+                getHistoryFilterScope(state, { ignoreKey: "supplier" })
                     .map((row) => row.supplier)
-                    .filter(Boolean)
+                    .filter(isValidHistoryDimension)
             )).sort((left, right) => left.localeCompare(right));
         }
         return [];
     }
 
     function syncHistoryFilterDefaults(state) {
-        const productOptions = getHistoryFilterOptions(state, "product");
-        if (state.historyFilters.product && !productOptions.includes(state.historyFilters.product)) {
-            state.historyFilters.product = "";
-        }
-        const supplierOptions = getHistoryFilterOptions(state, "supplier");
-        if (state.historyFilters.supplier && !supplierOptions.includes(state.historyFilters.supplier)) {
-            state.historyFilters.supplier = "";
-        }
+        let didChange = false;
+        let guard = 0;
+        do {
+            didChange = false;
+            const productOptions = getHistoryFilterOptions(state, "product");
+            if (state.historyFilters.product && !productOptions.includes(state.historyFilters.product)) {
+                state.historyFilters.product = "";
+                didChange = true;
+            }
+            const supplierOptions = getHistoryFilterOptions(state, "supplier");
+            if (state.historyFilters.supplier && !supplierOptions.includes(state.historyFilters.supplier)) {
+                state.historyFilters.supplier = "";
+                didChange = true;
+            }
+            guard += 1;
+        } while (didChange && guard < 5);
     }
 
     function getFilteredHistoryRows(state) {
         syncHistoryFilterDefaults(state);
         const { product, supplier, dateFrom, dateTo } = state.historyFilters;
-        if (!product) {
-            return [];
-        }
         const startDate = parseDateValue(dateFrom, { startOfDay: true });
         const endDate = parseDateValue(dateTo, { endOfDay: true });
 
-        return flattenHistoryRows(state)
+        const visibleRows = getHistoryDataset(state)
             .filter((row) => !product || row.productName === product)
             .filter((row) => !supplier || row.supplier === supplier)
             .filter((row) => {
@@ -982,11 +1739,17 @@
             .sort((left, right) => {
                 if (left.effectiveTimestamp !== right.effectiveTimestamp) return left.effectiveTimestamp - right.effectiveTimestamp;
                 return left.supplier.localeCompare(right.supplier);
-            })
-            .map((row, index, rows) => {
-                const previous = rows[index - 1];
-                const changeValue = previous ? row.unitPrice - previous.unitPrice : null;
-                const changePercent = previous && previous.unitPrice ? (changeValue / previous.unitPrice) * 100 : null;
+            });
+
+        const lastSeenBySeries = new Map();
+        return visibleRows.map((row) => {
+                const seriesKey = getHistorySeriesKey(row.productName, row.unit);
+                const previousSameSeries = lastSeenBySeries.get(seriesKey) || null;
+                const changeValue = previousSameSeries ? row.unitPrice - previousSameSeries.unitPrice : null;
+                const changePercent = previousSameSeries && previousSameSeries.unitPrice
+                    ? (changeValue / previousSameSeries.unitPrice) * 100
+                    : null;
+                lastSeenBySeries.set(seriesKey, row);
                 return {
                     ...row,
                     changeValue,
@@ -1007,9 +1770,13 @@
             };
         }
 
-        const oldest = rows[0];
-        const latest = rows[rows.length - 1];
-        const prices = rows.map((row) => row.unitPrice).filter((value) => Number.isFinite(value));
+        const sortedRows = rows.slice().sort((left, right) => {
+            if (left.effectiveTimestamp !== right.effectiveTimestamp) return left.effectiveTimestamp - right.effectiveTimestamp;
+            return left.supplier.localeCompare(right.supplier);
+        });
+        const oldest = sortedRows[0];
+        const latest = sortedRows[sortedRows.length - 1];
+        const prices = sortedRows.map((row) => row.unitPrice).filter((value) => Number.isFinite(value));
         const minPrice = prices.length ? Math.min(...prices) : null;
         const maxPrice = prices.length ? Math.max(...prices) : null;
         const totalChange = latest.unitPrice - oldest.unitPrice;
@@ -1025,12 +1792,53 @@
         };
     }
 
+    function getHistoryViewModel(state) {
+        syncHistoryFilterDefaults(state);
+        const historyRows = getHistoryDataset(state);
+        const filteredRows = getFilteredHistoryRows(state);
+        const tableRows = getHistoryDisplayRows(state, filteredRows);
+        const uniqueSeries = Array.from(new Set(filteredRows.map((row) => getHistorySeriesKey(row.productName, row.unit))));
+        if (uniqueSeries.length === 1) {
+            const autoSeriesKey = uniqueSeries[0];
+            const autoRowId = tableRows.find((row) => getHistorySeriesKey(row.productName, row.unit) === autoSeriesKey)?.historyId || "";
+            if (state.historySelectedSeriesKey !== autoSeriesKey) {
+                setHistorySelectedSeries(state, filteredRows, autoSeriesKey, autoRowId);
+            } else if (!state.historySelectedRowId) {
+                state.historySelectedRowId = autoRowId;
+            }
+        } else {
+            const selectedExistsInFiltered = state.historySelectedSeriesKey && uniqueSeries.includes(state.historySelectedSeriesKey);
+            if (!selectedExistsInFiltered) {
+                clearHistorySelectedSeries(state);
+            }
+        }
+        const selectedSeriesRows = state.historySelectedSeriesKey
+            ? getHistoryFullSeriesRows(state, state.historySelectedSeriesKey)
+            : [];
+        const summaryRows = selectedSeriesRows;
+        const summaryCurrency = summaryRows[summaryRows.length - 1]?.currency || filteredRows[filteredRows.length - 1]?.currency || "USD";
+        return {
+            hasHistoryContext: historyRows.length > 0,
+            productOptions: getHistoryFilterOptions(state, "product"),
+            supplierOptions: getHistoryFilterOptions(state, "supplier"),
+            filteredRows,
+            tableRows,
+            selectedSeriesRows,
+            selectedSeriesKey: state.historySelectedSeriesKey,
+            selectedSeriesLabel: selectedSeriesRows.length ? `${selectedSeriesRows[0].productName} | ${selectedSeriesRows[0].unit}` : "",
+            summary: getHistorySummary(summaryRows),
+            currency: summaryCurrency
+        };
+    }
+
     function initializeHistoryFilters(state) {
+        state.qcHistoryData = buildHistoryDataset(state);
         syncHistoryFilterDefaults(state);
     }
 
     function hydrateComparisons(state, comparisons) {
         state.savedComparisons = Array.isArray(comparisons) ? comparisons : [];
+        state.qcHistoryData = buildHistoryDataset(state);
         state.hasLoadedSavedComparisons = true;
         initializeHistoryFilters(state);
     }
@@ -1238,49 +2046,269 @@
         `;
     }
 
+    const MANUAL_REQUIRED_FIELD_LABELS = {
+        product_name: "Product Name",
+        supplier_name: "Supplier",
+        unit: "Unit",
+        quantity: "Quantity",
+        unit_price: "Unit Price",
+        quote_date: "Date"
+    };
+
+    const MANUAL_OPTIONAL_FIELDS = [
+        { key: "currency", label: "Currency", type: "text" },
+        { key: "delivery_time", label: "Delivery Time", type: "text" },
+        { key: "payment_term", label: "Payment Terms", type: "text" },
+        { key: "valid_until", label: "Valid Until", type: "date" },
+        { key: "notes", label: "Notes", type: "text", className: "is-wide" }
+    ];
+
+    function getManualRowMissingFields(row) {
+        const safeRow = row || {};
+        const missingFields = [];
+        if (!String(safeRow.product_name || "").trim()) missingFields.push("product_name");
+        if (!String(safeRow.supplier_name || "").trim()) missingFields.push("supplier_name");
+        if (!String(safeRow.unit || "").trim()) missingFields.push("unit");
+        if (!(Number(safeRow.quantity || 0) > 0)) missingFields.push("quantity");
+        if (!(Number(safeRow.unit_price || 0) > 0)) missingFields.push("unit_price");
+        if (!String(safeRow.quote_date || "").trim()) missingFields.push("quote_date");
+        return missingFields;
+    }
+
+    function isManualRowTouched(row) {
+        const safeRow = row || {};
+        return [
+            safeRow.product_name,
+            safeRow.supplier_name,
+            safeRow.unit,
+            safeRow.quantity,
+            safeRow.unit_price,
+            safeRow.quote_date
+        ].some((value) => String(value ?? "").trim() !== "");
+    }
+
+    function renderManualFieldLabel(label) {
+        return `${escapeHtml(label)} <span class="qc2-manual-required" aria-hidden="true">*</span>`;
+    }
+
+    function renderManualOptionalField(row, index, field) {
+        const value = row[field.key] ?? "";
+        const inputClassName = field.type === "date"
+            ? "recipe-input qc2-manual-date-input"
+            : "recipe-input";
+        return `
+            <label class="recipe-field ${field.className || ""}">
+                <span class="recipe-field-label">${escapeHtml(field.label)}</span>
+                <input
+                    class="${inputClassName}"
+                    type="${field.type}"
+                    data-manual-field="${field.key}"
+                    data-index="${index}"
+                    value="${escapeHtml(value)}"
+                    aria-label="${escapeHtml(field.label)}"
+                >
+            </label>
+        `;
+    }
+
+    function getManualTouchedRows(state) {
+        return (state.manualRows || []).filter((row) => isManualRowTouched(row));
+    }
+
+    function getManualValidation(state) {
+        const touchedRows = getManualTouchedRows(state);
+        const incompleteRows = touchedRows
+            .map((row, index) => ({
+                index,
+                row,
+                missingFields: getManualRowMissingFields(row)
+            }))
+            .filter((item) => item.missingFields.length > 0);
+        const completeRows = touchedRows.filter((row) => getManualRowMissingFields(row).length === 0);
+        return {
+            touchedRows,
+            touchedCount: touchedRows.length,
+            completeRows,
+            completeCount: completeRows.length,
+            incompleteRows,
+            incompleteCount: incompleteRows.length,
+            ready: completeRows.length > 0 && incompleteRows.length === 0
+        };
+    }
+
+    function getManualNormalizedRows(state) {
+        return getManualValidation(state).completeRows.map((row) => {
+            const quantity = Number(row.quantity || 0);
+            const unitPrice = Number(row.unit_price || 0);
+            const derivedTotalPrice = quantity * unitPrice;
+            return {
+                supplier_name: String(row.supplier_name || "").trim(),
+                product_name: String(row.product_name || "").trim(),
+                unit: String(row.unit || "").trim(),
+                quantity,
+                unit_price: unitPrice,
+                total_price: row.total_price ? Number(row.total_price || 0) : derivedTotalPrice,
+                quote_date: String(row.quote_date || "").trim() || null,
+                currency: String(row.currency || "USD").trim() || "USD",
+                delivery_time: String(row.delivery_time || "").trim(),
+                payment_term: String(row.payment_term || "").trim(),
+                valid_until: String(row.valid_until || "").trim() || null,
+                notes: String(row.notes || "").trim() || null
+            };
+        });
+    }
+
     function renderManualDateInput(index, value) {
         return `
             <div class="recipe-field">
-                <span class="recipe-field-label">Quote Date</span>
-                <div class="date-input-inline ${value ? "has-value" : ""}">
-                    <span class="date-input-empty">Select quote date</span>
-                    <input class="date-input" type="date" data-manual-field="quote_date" data-index="${index}" value="${escapeHtml(value)}" aria-label="Quote Date">
-                </div>
+                <span class="recipe-field-label">${renderManualFieldLabel("Date")}</span>
+                <input class="recipe-input qc2-manual-date-input" type="date" data-manual-field="quote_date" data-index="${index}" value="${escapeHtml(value)}" aria-label="Date">
             </div>
         `;
     }
 
     function renderManualRow(row, index) {
+        const missingFields = getManualRowMissingFields(row);
+        const showInlineFeedback = isManualRowTouched(row) && missingFields.length > 0;
         return `
-            <div class="qc2-manual-row" data-manual-row="${index}">
-                <label class="recipe-field"><span class="recipe-field-label">Product Name</span><input class="recipe-input" data-manual-field="product_name" data-index="${index}" value="${escapeHtml(row.product_name)}"></label>
-                <label class="recipe-field"><span class="recipe-field-label">Supplier</span><input class="recipe-input" data-manual-field="supplier_name" data-index="${index}" value="${escapeHtml(row.supplier_name)}"></label>
-                <label class="recipe-field"><span class="recipe-field-label">Unit</span><input class="recipe-input" data-manual-field="unit" data-index="${index}" value="${escapeHtml(row.unit)}"></label>
-                <label class="recipe-field"><span class="recipe-field-label">Quantity</span><input class="recipe-input" type="number" min="0" step="0.01" data-manual-field="quantity" data-index="${index}" value="${escapeHtml(row.quantity)}"></label>
-                <label class="recipe-field"><span class="recipe-field-label">Unit Price</span><input class="recipe-input" type="number" min="0" step="0.01" data-manual-field="unit_price" data-index="${index}" value="${escapeHtml(row.unit_price)}"></label>
-                ${renderManualDateInput(index, row.quote_date)}
-                <button type="button" class="secondary-btn qc2-remove-row" data-qc-action="remove-manual-row" data-index="${index}" ${index === 0 ? "disabled" : ""}>Remove</button>
+            <div class="qc2-manual-row${showInlineFeedback ? " is-incomplete" : ""}" data-manual-row="${index}">
+                <div class="qc2-manual-row-main">
+                    <label class="recipe-field"><span class="recipe-field-label">${renderManualFieldLabel("Product Name")}</span><input class="recipe-input" data-manual-field="product_name" data-index="${index}" value="${escapeHtml(row.product_name)}"></label>
+                    <label class="recipe-field"><span class="recipe-field-label">${renderManualFieldLabel("Supplier")}</span><input class="recipe-input" data-manual-field="supplier_name" data-index="${index}" value="${escapeHtml(row.supplier_name)}"></label>
+                    <label class="recipe-field"><span class="recipe-field-label">${renderManualFieldLabel("Unit")}</span><input class="recipe-input" data-manual-field="unit" data-index="${index}" value="${escapeHtml(row.unit)}"></label>
+                    <label class="recipe-field"><span class="recipe-field-label">${renderManualFieldLabel("Quantity")}</span><input class="recipe-input" type="number" min="0" step="0.01" data-manual-field="quantity" data-index="${index}" value="${escapeHtml(row.quantity)}"></label>
+                    <label class="recipe-field"><span class="recipe-field-label">${renderManualFieldLabel("Unit Price")}</span><input class="recipe-input" type="number" min="0" step="0.01" data-manual-field="unit_price" data-index="${index}" value="${escapeHtml(row.unit_price)}"></label>
+                    ${renderManualDateInput(index, row.quote_date)}
+                    <button type="button" class="secondary-btn qc2-remove-row qc2-manual-row-action" data-qc-action="remove-manual-row" data-index="${index}" ${index === 0 ? "disabled" : ""}>Remove</button>
+                </div>
+                <div class="qc2-manual-row-optional">
+                    ${MANUAL_OPTIONAL_FIELDS.map((field) => renderManualOptionalField(row, index, field)).join("")}
+                </div>
+                ${showInlineFeedback ? `<div class="qc2-manual-inline-note">Complete required fields: ${escapeHtml(missingFields.map((fieldName) => MANUAL_REQUIRED_FIELD_LABELS[fieldName]).join(", "))}.</div>` : ""}
             </div>
         `;
     }
 
     function renderQcManual(state) {
+        const validation = getManualValidation(state);
         return `
             <section class="qc2-screen qc2-screen-manual">
-                <div class="qc2-card">
+                <div class="qc2-card qc2-upload-card">
                     <div class="qc2-head qc2-head-compact">
-                        <div class="upload-step">Manual Entry</div>
+                        <div class="upload-step">Step 1</div>
                         <h2 class="qc2-title">Enter supplier offers manually</h2>
-                        <p class="qc2-copy">Capture supplier rows directly when quotes arrive by email, message, or a non-standard format.</p>
+                        <p class="qc2-copy">Enter supplier rows by hand using the same required fields and review discipline as the upload flow before analysis begins.</p>
+                    </div>
+                    <div class="qc2-upload-panel">
+                        <div class="qc2-upload-shell">
+                            <div class="qc2-upload-copy-block">
+                                <div class="qc2-upload-title">Manual supplier rows</div>
+                                <div class="qc2-upload-copy">${validation.completeCount} ready rows • ${validation.incompleteCount} incomplete rows</div>
+                                <div class="qc2-upload-note">Required fields come first. Optional context stays available below each row when payment terms, notes, or validity dates matter.</div>
+                            </div>
+                            <div class="qc2-upload-actions">
+                                <button type="button" class="secondary-btn" data-qc-action="add-manual-row">Add Row</button>
+                            </div>
+                        </div>
                     </div>
                     <div class="qc2-manual-list">
                         ${state.manualRows.map(renderManualRow).join("")}
                     </div>
                     ${renderStatus(state)}
+                    <div class="qc2-actions qc2-manual-actions">
+                        <div class="qc2-manual-actions-group">
+                            <button type="button" class="secondary-btn qc2-manual-footer-btn" data-qc-action="back-start">Back</button>
+                            <button type="button" class="secondary-btn qc2-manual-footer-btn" data-qc-action="add-manual-row">Add Row</button>
+                        </div>
+                        <div class="qc2-manual-actions-group qc2-manual-actions-group-end">
+                            <button type="button" class="action-btn qc2-manual-footer-btn qc2-manual-footer-btn-primary" data-qc-action="go-manual-review" ${validation.completeCount ? "" : "disabled"}>Review Manual Rows</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        `;
+    }
+
+    function renderManualReviewTableRow(row, index) {
+        return `
+            <tr>
+                <td>${index + 1}</td>
+                <td>${escapeHtml(row.product_name)}</td>
+                <td>${escapeHtml(row.supplier_name)}</td>
+                <td>${escapeHtml(row.unit)}</td>
+                <td>${escapeHtml(String(row.quantity))}</td>
+                <td>${escapeHtml(formatCurrency(row.unit_price, row.currency))}</td>
+                <td>${escapeHtml(formatDate(row.quote_date))}</td>
+                <td>${escapeHtml(row.currency || "USD")}</td>
+                <td>${escapeHtml(row.notes || "—")}</td>
+            </tr>
+        `;
+    }
+
+    function renderQcManualReview(state) {
+        const validation = getManualValidation(state);
+        const normalizedRows = getManualNormalizedRows(state);
+        const incompleteText = validation.incompleteRows.length
+            ? validation.incompleteRows.map((item) => `Row ${item.index + 1}: ${item.missingFields.map((fieldName) => MANUAL_REQUIRED_FIELD_LABELS[fieldName]).join(", ")}`).join(" | ")
+            : "";
+
+        return `
+            <section class="qc2-screen qc2-screen-review">
+                <div class="mapping-review-panel qc2-review-panel">
+                    <div class="mapping-review-head">
+                        <div>
+                            <div class="upload-step">Step 2</div>
+                            <h2 class="mapping-review-title">Review your manual quote rows</h2>
+                            <p class="mapping-review-copy">Confirm the required fields, scan the entered supplier rows, and move to analysis only when the manual dataset is complete.</p>
+                        </div>
+                        <div class="mapping-summary-chips">
+                            <span class="mapping-summary-chip">${validation.completeCount} of ${validation.touchedCount || state.manualRows.length} rows ready</span>
+                            <span class="mapping-summary-chip ${validation.ready ? "" : "is-warning"}">${validation.ready ? "Ready for analysis" : "Incomplete rows"}</span>
+                        </div>
+                    </div>
+                    <div class="mapping-alert mapping-alert-info">Manual entry uses the same required fields as upload: Product Name, Supplier, Unit, Quantity, Unit Price, and Date.</div>
+                    <section class="mapping-section">
+                        <div class="mapping-section-head">
+                            <div>
+                                <div class="mapping-section-title">Entered supplier rows</div>
+                                <div class="mapping-section-copy">Review the rows exactly as they will be sent into Quote Compare analysis.</div>
+                            </div>
+                        </div>
+                        <div class="quote-compare-table-scroll qc2-manual-review-table-shell">
+                            <table class="quote-compare-table qc2-manual-review-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Product Name</th>
+                                        <th>Supplier</th>
+                                        <th>Unit</th>
+                                        <th>Quantity</th>
+                                        <th>Unit Price</th>
+                                        <th>Date</th>
+                                        <th>Currency</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${normalizedRows.length ? normalizedRows.map((row, index) => renderManualReviewTableRow(row, index)).join("") : '<tr><td colspan="9"><div class="decision-list-empty">Add at least one complete supplier row to review it here.</div></td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                    <section class="mapping-section">
+                        <div class="mapping-section-head">
+                            <div>
+                                <div class="mapping-section-title">Optional context</div>
+                                <div class="mapping-section-copy">Currency, delivery timing, payment terms, validity, and notes are passed through when provided.</div>
+                            </div>
+                        </div>
+                        <div class="mapping-alert mapping-alert-info">Total price is derived automatically from Quantity × Unit Price when not entered manually.</div>
+                    </section>
+                    ${incompleteText ? `<div class="mapping-alert mapping-alert-error">${escapeHtml(incompleteText)}</div>` : ""}
+                    ${renderStatus(state)}
                     <div class="qc2-actions">
-                        <button type="button" class="secondary-btn" data-qc-action="back-start">Back</button>
-                        <button type="button" class="secondary-btn" data-qc-action="add-manual-row">Add Row</button>
-                        <button type="button" class="action-btn" data-qc-action="manual-analyze">Start Analysis</button>
+                        <button type="button" class="secondary-btn" data-qc-action="back-review">Back</button>
+                        <button type="button" class="action-btn" data-qc-action="manual-analyze" ${validation.ready ? "" : "disabled"}>Start Analysis</button>
                     </div>
                 </div>
             </section>
@@ -1340,6 +2368,9 @@
     }
 
     function renderQcReview(state) {
+        if (state.mode === "manual") {
+            return renderQcManualReview(state);
+        }
         const rows = getReviewRows(state).map((row) => ({ ...row, options: buildMappingOptions(state, row) }));
         const requiredRows = rows.filter((row) => row.required);
         const optionalRows = rows.filter((row) => !row.required);
@@ -1921,13 +2952,20 @@
         `;
     }
 
-    function renderHistoryTrend(rows, { hasHistoryContext = false, hasProductSelected = false } = {}) {
+    function renderHistoryTrend(state, rows, { hasHistoryContext = false } = {}) {
+        if (!hasHistoryContext) {
+            return '<div class="decision-list-empty">Save supplier quotes to start building product history.</div>';
+        }
+        if (!state.historySelectedSeriesKey) {
+            return '<div class="decision-list-empty">Select a product to view trend.</div>';
+        }
         if (!rows.length) {
-            if (hasHistoryContext && !hasProductSelected) {
-                return '<div class="decision-list-empty">Select a product to see unit-price movement over time for the active quote set.</div>';
+            if (hasHistoryContext) {
+                return '<div class="decision-list-empty">The selected product is outside the current filters.</div>';
             }
             return '<div class="decision-list-empty">Save supplier quotes to start building product history.</div>';
         }
+        const summary = buildHistorySeriesSummary(rows);
         const prices = rows.map((row) => row.unitPrice);
         const minPrice = Math.min(...prices);
         const maxPrice = Math.max(...prices);
@@ -1935,24 +2973,46 @@
         const minBarWidth = 18;
         const equalBarWidth = 70;
         return `
-            <div class="qc2-trend-list">
+            <div class="qc2-history-selected-series-head">
+                <div>
+                    <div class="mapping-section-title">${escapeHtml(state.historySelectedProductName || rows[0].productName)}</div>
+                    <div class="mapping-section-copy">${escapeHtml(state.historySelectedUnit || rows[0].unit || "Unit missing")} | ${rows.length} visible movements</div>
+                </div>
+                <div class="qc2-history-selected-series-stats">
+                    <span>Latest ${escapeHtml(formatCurrency(summary.latestUnitPrice, rows[rows.length - 1]?.currency || "USD"))}</span>
+                    <span>${summary.firstDate} to ${summary.latestDate}</span>
+                </div>
+            </div>
+            <div class="qc2-trend-list qc2-trend-list-series">
                 ${rows.map((row) => {
                     const normalizedWidth = range === 0
                         ? equalBarWidth
                         : minBarWidth + (((row.unitPrice - minPrice) / range) * (100 - minBarWidth));
+                    const priceRatio = range === 0 ? 0.35 : (row.unitPrice - minPrice) / range;
                     const directionClass = row.changeValue == null ? "neutral" : row.changeValue > 0 ? "negative" : row.changeValue < 0 ? "positive" : "neutral";
+                    let trackColor = "linear-gradient(90deg, rgba(96, 165, 250, 0.88), rgba(56, 189, 248, 0.72))";
+                    if (priceRatio >= 0.75) {
+                        trackColor = "linear-gradient(90deg, rgba(251, 191, 36, 0.9), rgba(249, 115, 22, 0.76))";
+                    } else if (priceRatio >= 0.45) {
+                        trackColor = "linear-gradient(90deg, rgba(52, 211, 153, 0.88), rgba(250, 204, 21, 0.70))";
+                    } else if (priceRatio >= 0.2) {
+                        trackColor = "linear-gradient(90deg, rgba(59, 130, 246, 0.88), rgba(16, 185, 129, 0.68))";
+                    }
                     return `
                         <div class="qc2-trend-row">
                             <div class="qc2-trend-meta">
                                 <span>${escapeHtml(formatDate(row.quoteDate || row.createdAt))}</span>
-                                <span>${escapeHtml(row.supplier || "Supplier missing")}</span>
+                                <span>${escapeHtml(row.supplier || "Supplier missing")} | Qty ${escapeHtml(String(row.quantity || 0))}</span>
                             </div>
                             <div class="qc2-trend-bar-shell">
                                 <div class="qc2-trend-bar-track">
-                                    <div class="qc2-trend-bar is-${directionClass}" style="width:${normalizedWidth}%"></div>
+                                    <div class="qc2-trend-bar is-${directionClass}" style="width:${normalizedWidth}%; background:${trackColor};"></div>
                                 </div>
                             </div>
-                            <div class="qc2-trend-value">${escapeHtml(formatCurrency(row.unitPrice, row.currency))}</div>
+                            <div class="qc2-trend-value">
+                                ${escapeHtml(formatCurrency(row.unitPrice, row.currency))}
+                                <span class="qc2-trend-value-sub">${escapeHtml(formatCurrency(row.totalPrice, row.currency))}${row.changeValue == null ? "" : ` | ${escapeHtml(formatCurrency(row.changeValue, row.currency))}`}</span>
+                            </div>
                         </div>
                     `;
                 }).join("")}
@@ -2042,32 +3102,37 @@
         const optionSource = getHistoryFilterOptions(state, key);
         const matchedValue = optionSource.find((option) => option.toLowerCase() === normalizedValue.toLowerCase()) || "";
         state.historyFilters[key] = matchedValue;
-        if (key === "product") {
-            state.historyFilters.supplier = "";
-        }
+        syncHistoryFilterDefaults(state);
         return true;
     }
 
-    function filterHistoryComboboxOptions(combobox, searchTerm) {
-        if (!combobox) return;
-        const normalizedSearch = String(searchTerm || "").trim().toLowerCase();
-        let visibleCount = 0;
-        combobox.querySelectorAll("[data-qc-history-filter-option]").forEach((option) => {
-            if (option.dataset.value === "") {
-                option.hidden = false;
-                return;
-            }
-            const matches = !normalizedSearch || option.dataset.value.toLowerCase().includes(normalizedSearch);
-            option.hidden = !matches;
-            if (matches) {
-                visibleCount += 1;
-            }
-        });
-        const emptyState = combobox.querySelector("[data-qc-history-filter-empty]");
-        if (emptyState) {
-            emptyState.hidden = visibleCount > 0;
+function filterHistoryComboboxOptions(combobox, searchTerm) {
+    if (!combobox) return;
+
+    const normalizedSearch = String(searchTerm || "").trim().toLowerCase();
+    let visibleCount = 0;
+
+    combobox.querySelectorAll("[data-qc-history-filter-option]").forEach((option) => {
+        if (option.dataset.value === "") {
+            option.style.display = "";
+            return;
         }
+
+        const text = option.textContent.toLowerCase();
+        const matches = !normalizedSearch || text.includes(normalizedSearch);
+
+        option.style.display = matches ? "" : "none";
+
+        if (matches) {
+            visibleCount += 1;
+        }
+    });
+
+    const emptyState = combobox.querySelector("[data-qc-history-filter-empty]");
+    if (emptyState) {
+        emptyState.style.display = visibleCount > 0 ? "none" : "";
     }
+}
 
     function closeHistoryComboboxes(elements) {
         if (!elements.app) return;
@@ -2106,93 +3171,207 @@
         }
     }
 
-    function renderHistoryTable(rows, { hasHistoryContext = false, hasProductSelected = false } = {}) {
-        if (!rows.length) {
-            if (hasHistoryContext && !hasProductSelected) {
-                return '<div class="decision-list-empty">Uploaded quote history is ready. Select a product to view supplier history, KPIs, and the trend table.</div>';
-            }
-            return '<div class="decision-list-empty">No saved quotes match the selected product and filters.</div>';
-        }
+    function renderHistorySummaryCards(summary, currency) {
         return `
-            <div class="quote-compare-table-scroll">
-                <table class="quote-compare-table qc2-history-table">
+            <article class="summary-card"><div class="summary-card-title">Latest price</div><div class="summary-card-value compact">${summary.latestPrice == null ? "--" : escapeHtml(formatCurrency(summary.latestPrice, currency))}</div><div class="summary-card-insight">Most recent unit price in the selected range.</div></article>
+            <article class="summary-card"><div class="summary-card-title">Oldest price</div><div class="summary-card-value compact">${summary.oldestPrice == null ? "--" : escapeHtml(formatCurrency(summary.oldestPrice, currency))}</div><div class="summary-card-insight">Starting unit price in the selected range.</div></article>
+            <article class="summary-card"><div class="summary-card-title">Min / Max</div><div class="summary-card-value compact">${summary.minPrice == null ? "--" : `${escapeHtml(formatCurrency(summary.minPrice, currency))} / ${escapeHtml(formatCurrency(summary.maxPrice, currency))}`}</div><div class="summary-card-insight">Lowest and highest unit price in the visible history.</div></article>
+            <article class="summary-card"><div class="summary-card-title">Total change</div><div class="summary-card-value compact">${summary.totalChange == null ? "--" : escapeHtml(formatCurrency(summary.totalChange, currency))}</div><div class="summary-card-insight">${summary.totalChangePercent == null ? "No change percentage available yet." : `${escapeHtml(formatPercent(summary.totalChangePercent))} vs oldest visible quote.`}</div></article>
+        `;
+    }
+
+    function refreshHistoryView(elements, state) {
+        if (state.currentScreen !== "history") return;
+        const historyScreen = elements.app?.querySelector(".qc2-screen-history");
+        if (!historyScreen) {
+            renderApp(elements, state, { preserveScroll: true });
+            return;
+        }
+
+        const viewModel = getHistoryViewModel(state);
+        closeHistoryComboboxes(elements);
+
+        const controls = historyScreen.querySelector(".qc2-history-controls");
+        if (controls) {
+            controls.innerHTML = renderHistoryFilters(state, viewModel.productOptions, viewModel.supplierOptions);
+        }
+
+        const summaryGrid = historyScreen.querySelector(".qc2-history-summary-grid");
+        if (summaryGrid) {
+            summaryGrid.innerHTML = renderHistorySummaryCards(viewModel.summary, viewModel.currency);
+        }
+
+        const tableContent = historyScreen.querySelector("[data-qc-history-table-content]");
+        if (tableContent) {
+            tableContent.innerHTML = renderHistoryTable(state, viewModel.tableRows, { hasHistoryContext: viewModel.hasHistoryContext });
+        }
+
+        const trendContent = historyScreen.querySelector("[data-qc-history-trend-content]");
+        if (trendContent) {
+            trendContent.innerHTML = renderHistoryTrend(state, viewModel.selectedSeriesRows, { hasHistoryContext: viewModel.hasHistoryContext });
+        }
+
+        const detailModalSlot = historyScreen.querySelector("[data-qc-history-detail-modal]");
+        if (detailModalSlot) {
+            detailModalSlot.innerHTML = renderHistoryDetailModal(state);
+        }
+
+        scheduleHistoryDetailChartRender(elements, state);
+
+        persistQuoteCompareSession(state, elements);
+    }
+
+    function renderHistoryTable(state, rows, { hasHistoryContext = false } = {}) {
+        if (!rows.length) {
+            if (hasHistoryContext) {
+                return '<div class="decision-list-empty">No saved quotes match the selected filters.</div>';
+            }
+            return '<div class="decision-list-empty">Save supplier quotes to start building product history.</div>';
+        }
+        const visibleColumns = getVisibleHistoryColumns(state);
+        return `
+            <div class="qc2-history-table-shell">
+                <div class="qc2-history-table-scroll" data-qc-history-table-scroll>
+                    <table class="quote-compare-table qc2-history-table">
                     <thead>
                         <tr>
-                            <th>Quote Date</th>
-                            <th>Product</th>
-                            <th>Supplier</th>
-                            <th>Unit</th>
-                            <th>Quantity</th>
-                            <th>Unit Price</th>
-                            <th>Total Price</th>
-                            <th>Change vs previous</th>
-                            <th>Change %</th>
+                            ${visibleColumns.map((column) => `
+                                ${(() => {
+                                    const sortDirection = getHistoryHeaderSortDirection(state, column.key);
+                                    const sortHint = getHistoryHeaderSortHint(state, column.key);
+                                    const sortIndicator = getHistoryHeaderSortIndicator(state, column.key);
+                                    const ariaSort = getHistoryHeaderAriaSort(state, column.key);
+                                    const headerClasses = [
+                                        column.headerClassName || "",
+                                        "qc2-history-sortable-header",
+                                        sortDirection ? "is-sort-active" : "",
+                                        sortDirection === "asc" ? "is-sort-asc" : "",
+                                        sortDirection === "desc" ? "is-sort-desc" : ""
+                                    ].filter(Boolean).join(" ");
+                                    return `
+                                <th
+                                    class="${headerClasses}"
+                                    data-qc-history-sort-key="${column.key}"
+                                    data-qc-history-column-key="${column.key}"
+                                    draggable="true"
+                                    role="button"
+                                    tabindex="0"
+                                    aria-sort="${ariaSort}"
+                                    title="${escapeHtml(sortHint)}"
+                                    aria-label="${escapeHtml(`${column.label}. ${sortHint}`)}"
+                                ><span class="qc2-history-sortable-head-copy"><span class="qc2-history-sortable-label">${escapeHtml(column.label)}</span><span class="qc2-history-sortable-indicator" aria-hidden="true">${escapeHtml(sortIndicator)}</span></span></th>`;
+                                })()}
+                            `).join("")}
                         </tr>
                     </thead>
                     <tbody>
                         ${rows.map((row) => `
-                            <tr>
-                                <td>${escapeHtml(formatDate(row.quoteDate || row.createdAt))}</td>
-                                <td>${escapeHtml(row.productName)}</td>
-                                <td>${escapeHtml(row.supplier)}</td>
-                                <td>${escapeHtml(row.unit || "Not provided")}</td>
-                                <td>${escapeHtml(String(row.quantity || 0))}</td>
-                                <td>${escapeHtml(formatCurrency(row.unitPrice, row.currency))}</td>
-                                <td>${escapeHtml(formatCurrency(row.totalPrice, row.currency))}</td>
-                                <td class="${row.changeValue == null ? "" : row.changeValue > 0 ? "qc2-change-negative" : row.changeValue < 0 ? "qc2-change-positive" : ""}">
-                                    ${row.changeValue == null ? "--" : escapeHtml(formatCurrency(row.changeValue, row.currency))}
-                                </td>
-                                <td class="${row.changePercent == null ? "" : row.changePercent > 0 ? "qc2-change-negative" : row.changePercent < 0 ? "qc2-change-positive" : ""}">
-                                    ${row.changePercent == null ? "--" : escapeHtml(formatPercent(row.changePercent))}
-                                </td>
+                            <tr
+                                class="${state.historySelectedRowId === row.historyId ? "is-history-row-selected" : ""}"
+                                data-qc-history-row
+                                data-qc-history-series-key="${escapeHtml(getHistorySeriesKey(row.productName, row.unit))}"
+                                data-qc-history-row-id="${escapeHtml(row.historyId)}"
+                                tabindex="0"
+                                role="button"
+                                aria-label="${escapeHtml(`${row.productName} ${row.unit || ""}. Click to inspect movement. Double click for details.`)}"
+                            >
+                                ${visibleColumns.map((column) => {
+                                    const toneClassName = typeof column.toneClassName === "function" ? column.toneClassName(row) : "";
+                                    const cellClassName = [column.cellClassName || "", toneClassName].filter(Boolean).join(" ");
+                                    return `<td class="${cellClassName}">${column.render(row)}</td>`;
+                                }).join("")}
                             </tr>
                         `).join("")}
                     </tbody>
-                </table>
+                    </table>
+                </div>
             </div>
         `;
     }
 
+    function renderHistoryDetailModal(state) {
+        if (!state.historyDetailModalOpen || !state.historyDetailModalSeries?.rows?.length) return "";
+        const { productName, unit, rows, usesFullSeries } = state.historyDetailModalSeries;
+        const summary = buildHistorySeriesSummary(rows);
+        const insights = buildHistorySeriesInsights(rows);
+        return `
+            <div class="qc2-history-detail-backdrop" data-qc-history-detail-close></div>
+            <aside class="qc2-history-detail-drawer" role="dialog" aria-modal="true" aria-label="${escapeHtml(`${productName} ${unit} detail view`)}">
+                <div class="qc2-history-detail-head">
+                    <div>
+                        <div class="mapping-section-title">${escapeHtml(productName)}</div>
+                    <div class="mapping-section-copy">Unit: ${escapeHtml(unit || "Unit missing")} • ${rows.length} movements</div>
+                    </div>
+                    <button type="button" class="secondary-btn" data-qc-history-detail-close="true" aria-label="Close history detail">Close</button>
+                </div>
+                <div class="qc2-history-detail-meta">
+                    <span>${escapeHtml(summary.firstDate || "--")} → ${escapeHtml(summary.latestDate || "--")}</span>
+                    ${usesFullSeries ? "<span>Full history</span>" : ""}
+                </div>
+                ${renderHistorySeriesChart(rows)}
+                <div class="qc2-history-detail-kpis">
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Latest Unit Price</div><div class="summary-card-value compact">${summary.latestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.latestUnitPrice, rows[rows.length - 1]?.currency || "USD"))}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Lowest Unit Price</div><div class="summary-card-value compact">${summary.lowestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.lowestUnitPrice, rows[0]?.currency || "USD"))}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Highest Unit Price</div><div class="summary-card-value compact">${summary.highestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.highestUnitPrice, rows[0]?.currency || "USD"))}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Net Change</div><div class="summary-card-value compact">${summary.netChange == null ? "--" : escapeHtml(formatCurrency(summary.netChange, rows[rows.length - 1]?.currency || "USD"))}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Net Change %</div><div class="summary-card-value compact">${summary.netChangePercent == null ? "--" : escapeHtml(formatPercent(summary.netChangePercent))}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Average Unit Price</div><div class="summary-card-value compact">${summary.averageUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.averageUnitPrice, rows[0]?.currency || "USD"))}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Movement Count</div><div class="summary-card-value compact">${summary.movementCount}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Supplier Count</div><div class="summary-card-value compact">${summary.supplierCount}</div></article>
+                </div>
+                <div class="qc2-history-detail-insights">
+                    ${insights.map((insight) => `<div class="qc2-history-detail-insight">${escapeHtml(insight)}</div>`).join("")}
+                </div>
+                <div class="qc2-history-detail-timeline">
+                    ${rows.map((row) => `
+                        <div class="qc2-history-detail-item">
+                            <div class="qc2-history-detail-item-head">
+                                <span>${escapeHtml(formatDate(row.quoteDate || row.createdAt))}</span>
+                                <span>${escapeHtml(row.supplier || "Supplier missing")}</span>
+                            </div>
+                            <div class="qc2-history-detail-item-copy">Qty ${escapeHtml(String(row.quantity || 0))} • Unit ${escapeHtml(formatCurrency(row.unitPrice, row.currency))} • Total ${escapeHtml(formatCurrency(row.totalPrice, row.currency))}</div>
+                        </div>
+                    `).join("")}
+                </div>
+            </aside>
+        `;
+    }
+
     function renderQcHistory(state) {
-        const historyRows = flattenHistoryRows(state);
-        const hasHistoryContext = historyRows.length > 0;
-        const hasProductSelected = Boolean(state.historyFilters.product);
-        const productOptions = getHistoryFilterOptions(state, "product");
-        const supplierOptions = getHistoryFilterOptions(state, "supplier");
-        const filteredRows = getFilteredHistoryRows(state);
-        const summary = getHistorySummary(filteredRows);
-        const currency = filteredRows[filteredRows.length - 1]?.currency || "USD";
+        const viewModel = getHistoryViewModel(state);
 
         return `
-            <section class="qc2-screen qc2-screen-history">
+            <section class="qc2-screen qc2-screen-history" data-qc-anchor="history-top">
                 <div class="qc2-card qc2-history-card">
                     <div class="qc2-head qc2-head-compact">
                         <div class="qc2-head-shell">
                             <div class="qc2-head-copy">
                                 <div class="upload-step">Step 4</div>
                                 <h2 class="qc2-title">Product history</h2>
-                                <p class="qc2-copy">Pick a product, filter the saved supplier offers, and review how the price has changed over time.</p>
+                                <p class="qc2-copy">Filter saved supplier offers by product, supplier, and date to review how visible prices changed over time.</p>
                             </div>
                         </div>
                     </div>
                     <div class="qc2-history-controls">
-                        ${renderHistoryFilters(state, productOptions, supplierOptions)}
+                        ${renderHistoryFilters(state, viewModel.productOptions, viewModel.supplierOptions)}
                     </div>
-                    ${hasHistoryContext && !hasProductSelected ? '<div class="decision-list-empty qc2-history-empty-state">Choose a product to activate Product History for the current uploaded quote set.</div>' : ""}
                     <div class="qc2-summary-grid qc2-history-summary-grid">
-                        <article class="summary-card"><div class="summary-card-title">Latest price</div><div class="summary-card-value compact">${summary.latestPrice == null ? "--" : escapeHtml(formatCurrency(summary.latestPrice, currency))}</div><div class="summary-card-insight">Most recent unit price in the selected range.</div></article>
-                        <article class="summary-card"><div class="summary-card-title">Oldest price</div><div class="summary-card-value compact">${summary.oldestPrice == null ? "--" : escapeHtml(formatCurrency(summary.oldestPrice, currency))}</div><div class="summary-card-insight">Starting unit price in the selected range.</div></article>
-                        <article class="summary-card"><div class="summary-card-title">Min / Max</div><div class="summary-card-value compact">${summary.minPrice == null ? "--" : `${escapeHtml(formatCurrency(summary.minPrice, currency))} / ${escapeHtml(formatCurrency(summary.maxPrice, currency))}`}</div><div class="summary-card-insight">Lowest and highest unit price in the visible history.</div></article>
-                        <article class="summary-card"><div class="summary-card-title">Total change</div><div class="summary-card-value compact">${summary.totalChange == null ? "--" : escapeHtml(formatCurrency(summary.totalChange, currency))}</div><div class="summary-card-insight">${summary.totalChangePercent == null ? "No change percentage available yet." : `${escapeHtml(formatPercent(summary.totalChangePercent))} vs oldest visible quote.`}</div></article>
+                        ${renderHistorySummaryCards(viewModel.summary, viewModel.currency)}
                     </div>
-                    <section class="qc2-history-block qc2-history-table-block">
-                        <div class="mapping-section-head"><div><div class="mapping-section-title">Price history table</div><div class="mapping-section-copy">Review each saved supplier quote, including change versus the previous visible quote.</div></div></div>
-                        ${renderHistoryTable(filteredRows, { hasHistoryContext, hasProductSelected })}
+                    <section class="qc2-history-block qc2-history-table-block qc2-history-section">
+                        <div class="mapping-section-head">
+                            <div>
+                                <div class="mapping-section-title">Price history table</div>
+                                <div class="mapping-section-copy">Review each saved supplier quote, including change versus the previous visible quote.</div>
+                            </div>
+                        </div>
+                        <div data-qc-history-table-content>${renderHistoryTable(state, viewModel.tableRows, { hasHistoryContext: viewModel.hasHistoryContext })}</div>
                     </section>
                     <section class="qc2-history-block qc2-history-trend-block">
-                        <div class="mapping-section-head"><div><div class="mapping-section-title">Simple trend</div><div class="mapping-section-copy">Unit price over time for the currently selected product and filters.</div></div></div>
-                        ${renderHistoryTrend(filteredRows, { hasHistoryContext, hasProductSelected })}
+                        <div class="mapping-section-head"><div><div class="mapping-section-title">Simple trend</div><div class="mapping-section-copy">Unit price over time for the currently visible history rows.</div></div></div>
+                        <div data-qc-history-trend-content>${renderHistoryTrend(state, viewModel.selectedSeriesRows, { hasHistoryContext: viewModel.hasHistoryContext })}</div>
                     </section>
+                    <div data-qc-history-detail-modal>${renderHistoryDetailModal(state)}</div>
                     ${renderStatus(state)}
                     <div class="qc2-actions">
                         <button type="button" class="secondary-btn" data-qc-action="back-analyze">Back to Analyze</button>
@@ -2222,6 +3401,7 @@
             writeScrollPosition(elements, preserveScrollTop);
         }
         restoreAnchorOffset(elements, anchorSelector, anchorOffset);
+        scheduleHistoryDetailChartRender(elements, state);
         persistQuoteCompareSession(state, elements);
         console.info("[quote compare render timing]", {
             screen: state.currentScreen,
@@ -2553,7 +3733,11 @@
                 return;
             }
             if (action === "back-review") {
-                state.currentScreen = state.lastFlowScreen === "manual" ? "manual" : "review";
+                if (state.currentScreen === "review" && state.mode === "manual") {
+                    state.currentScreen = "manual";
+                } else {
+                    state.currentScreen = "review";
+                }
                 renderApp(elements, state);
                 return;
             }
@@ -2565,6 +3749,24 @@
             if (action === "remove-manual-row") {
                 const index = Number(actionTarget.dataset.index || -1);
                 if (index > 0) state.manualRows.splice(index, 1);
+                renderApp(elements, state);
+                return;
+            }
+            if (action === "go-manual-review") {
+                const validation = getManualValidation(state);
+                if (!validation.completeCount) {
+                    setStatus(state, "Add at least one complete supplier row before continuing to review.", "error");
+                    renderApp(elements, state);
+                    return;
+                }
+                if (!validation.ready) {
+                    setStatus(state, "Complete the missing required fields before continuing to review.", "error");
+                    renderApp(elements, state);
+                    return;
+                }
+                state.lastFlowScreen = "manual";
+                state.currentScreen = "review";
+                setStatus(state, "Manual rows are ready for review.", "info");
                 renderApp(elements, state);
                 return;
             }
@@ -2647,6 +3849,9 @@
                 await ensureHistoryComparisonsLoaded(state);
                 state.currentScreen = "history";
                 renderApp(elements, state);
+                requestAnimationFrame(() => {
+                    scrollHistorySectionIntoView(elements);
+                });
                 return;
             }
             if (action === "back-analyze") {
@@ -2673,7 +3878,46 @@
             if (historyOption) {
                 const key = historyOption.dataset.qcHistoryFilterOption;
                 applyHistoryFilterValue(state, key, historyOption.dataset.value || "");
-                renderApp(elements, state);
+                clearHistorySelectedSeries(state);
+                closeHistoryDetailModal(state);
+                refreshHistoryView(elements, state);
+                return;
+            }
+
+            const historySortHeader = event.target.closest("[data-qc-history-sort-key]");
+            if (historySortHeader) {
+                if (state.historyDrag?.suppressClick) {
+                    state.historyDrag.suppressClick = false;
+                    return;
+                }
+                cycleHistorySort(state, historySortHeader.dataset.qcHistorySortKey || "");
+                refreshHistoryView(elements, state);
+                return;
+            }
+
+            const historyRow = event.target.closest("[data-qc-history-row]");
+            if (historyRow) {
+                const seriesKey = historyRow.dataset.qcHistorySeriesKey || "";
+                const rowId = historyRow.dataset.qcHistoryRowId || "";
+                if (state.historyRowClickTimer) {
+                    clearTimeout(state.historyRowClickTimer);
+                }
+                state.historyRowClickTimer = setTimeout(() => {
+                    const previousScrollTop = readScrollPosition(elements);
+                    const previousTableScrollTop = getHistoryTableScroller(elements)?.scrollTop || 0;
+                    const viewModel = getHistoryViewModel(state);
+                    setHistorySelectedSeries(state, viewModel.filteredRows, seriesKey, rowId);
+                    refreshHistoryView(elements, state);
+                    requestAnimationFrame(() => {
+                        writeScrollPosition(elements, previousScrollTop);
+                        const nextTableScroller = getHistoryTableScroller(elements);
+                        if (nextTableScroller) nextTableScroller.scrollTop = previousTableScrollTop;
+                        if (shouldScrollToHistoryTrend(elements)) {
+                            elements.app?.querySelector("[data-qc-history-trend-content]")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                        }
+                    });
+                    state.historyRowClickTimer = null;
+                }, 180);
                 return;
             }
 
@@ -2700,6 +3944,14 @@
 
             if (!event.target.closest("[data-qc-history-combobox]")) {
                 closeHistoryComboboxes(elements);
+            }
+
+            if (event.target.closest("[data-qc-history-detail-close]")) {
+                const previousScrollTop = readScrollPosition(elements);
+                const previousTableScrollTop = getHistoryTableScroller(elements)?.scrollTop || 0;
+                closeHistoryDetailModal(state);
+                refreshHistoryView(elements, state);
+                restoreHistoryTablePosition(elements, previousScrollTop, previousTableScrollTop);
             }
         });
 
@@ -2729,8 +3981,21 @@
             if (historyFilter) {
                 const key = historyFilter.dataset.qcHistoryFilter;
                 state.historyFilters[key] = historyFilter.value || "";
-                if (key === "product") state.historyFilters.supplier = "";
-                renderApp(elements, state);
+                syncHistoryFilterDefaults(state);
+                clearHistorySelectedSeries(state);
+                closeHistoryDetailModal(state);
+                refreshHistoryView(elements, state);
+                return;
+            }
+
+            const historyColumnCheckbox = event.target.closest("[data-qc-history-column-toggle]");
+            if (historyColumnCheckbox) {
+                setHistoryColumnVisibility(
+                    state,
+                    historyColumnCheckbox.dataset.qcHistoryColumnToggle,
+                    historyColumnCheckbox.checked
+                );
+                refreshHistoryView(elements, state);
                 return;
             }
 
@@ -2741,7 +4006,7 @@
                 if (index >= 0 && state.manualRows[index] && field) {
                     state.manualRows[index][field] = manualField.value;
                 }
-                renderApp(elements, state);
+                persistQuoteCompareSession(state, elements);
             }
         });
 
@@ -2767,9 +4032,46 @@
             if (index >= 0 && state.manualRows[index] && field) {
                 state.manualRows[index][field] = manualField.value;
             }
+            persistQuoteCompareSession(state, elements);
         });
 
         elements.app.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && state.historyDetailModalOpen) {
+                const previousScrollTop = readScrollPosition(elements);
+                const previousTableScrollTop = getHistoryTableScroller(elements)?.scrollTop || 0;
+                closeHistoryDetailModal(state);
+                refreshHistoryView(elements, state);
+                restoreHistoryTablePosition(elements, previousScrollTop, previousTableScrollTop);
+                return;
+            }
+
+            const historySortHeader = event.target.closest("[data-qc-history-sort-key]");
+            if (historySortHeader && (event.key === "Enter" || event.key === " ")) {
+                event.preventDefault();
+                cycleHistorySort(state, historySortHeader.dataset.qcHistorySortKey || "");
+                refreshHistoryView(elements, state);
+                return;
+            }
+
+            const historyRow = event.target.closest("[data-qc-history-row]");
+            if (historyRow && (event.key === "Enter" || event.key === " ")) {
+                event.preventDefault();
+                const seriesKey = historyRow.dataset.qcHistorySeriesKey || "";
+                const rowId = historyRow.dataset.qcHistoryRowId || "";
+                const previousScrollTop = readScrollPosition(elements);
+                const previousTableScrollTop = getHistoryTableScroller(elements)?.scrollTop || 0;
+                const viewModel = getHistoryViewModel(state);
+                if (event.key === "Enter" && state.historySelectedSeriesKey === seriesKey) {
+                    const fullSeriesRows = getHistoryFullSeriesRows(state, seriesKey);
+                    openHistoryDetailModal(state, fullSeriesRows, true);
+                } else {
+                    setHistorySelectedSeries(state, viewModel.filteredRows, seriesKey, rowId);
+                }
+                refreshHistoryView(elements, state);
+                restoreHistoryTablePosition(elements, previousScrollTop, previousTableScrollTop);
+                return;
+            }
+
             const historySearchInput = event.target.closest("[data-qc-history-filter-search]");
             if (!historySearchInput) return;
             const combobox = historySearchInput.closest("[data-qc-history-combobox]");
@@ -2793,6 +4095,63 @@
                 );
                 renderApp(elements, state);
             }
+        });
+
+        elements.app.addEventListener("dragstart", (event) => {
+            const historyHeader = event.target.closest("[data-qc-history-column-key]");
+            if (!historyHeader) return;
+            state.historyDrag = { key: historyHeader.dataset.qcHistoryColumnKey || "", suppressClick: false };
+            if (event.dataTransfer) {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", state.historyDrag.key);
+            }
+        });
+
+        elements.app.addEventListener("dragover", (event) => {
+            const historyHeader = event.target.closest("[data-qc-history-column-key]");
+            if (!historyHeader) return;
+            event.preventDefault();
+            if (event.dataTransfer) {
+                event.dataTransfer.dropEffect = "move";
+            }
+        });
+
+        elements.app.addEventListener("drop", (event) => {
+            const historyHeader = event.target.closest("[data-qc-history-column-key]");
+            if (!historyHeader) return;
+            event.preventDefault();
+            const draggedKey = state.historyDrag?.key || event.dataTransfer?.getData("text/plain") || "";
+            const targetKey = historyHeader.dataset.qcHistoryColumnKey || "";
+            if (moveHistoryColumn(state, draggedKey, targetKey)) {
+                state.historyDrag = { key: "", suppressClick: true };
+                refreshHistoryView(elements, state);
+                return;
+            }
+            state.historyDrag = { key: "", suppressClick: false };
+        });
+
+        elements.app.addEventListener("dragend", () => {
+            if (!state.historyDrag) return;
+            state.historyDrag.key = "";
+        });
+
+        elements.app.addEventListener("dblclick", (event) => {
+            const historyRow = event.target.closest("[data-qc-history-row]");
+            if (!historyRow) return;
+            if (state.historyRowClickTimer) {
+                clearTimeout(state.historyRowClickTimer);
+                state.historyRowClickTimer = null;
+            }
+            const seriesKey = historyRow.dataset.qcHistorySeriesKey || "";
+            const rowId = historyRow.dataset.qcHistoryRowId || "";
+            const previousScrollTop = readScrollPosition(elements);
+            const previousTableScrollTop = getHistoryTableScroller(elements)?.scrollTop || 0;
+            const viewModel = getHistoryViewModel(state);
+            setHistorySelectedSeries(state, viewModel.filteredRows, seriesKey, rowId);
+            const fullSeriesRows = getHistoryFullSeriesRows(state, seriesKey);
+            openHistoryDetailModal(state, fullSeriesRows, true);
+            refreshHistoryView(elements, state);
+            restoreHistoryTablePosition(elements, previousScrollTop, previousTableScrollTop);
         });
     }
 
@@ -2859,6 +4218,7 @@
             resetQuoteCompareUploadState(state);
         } else {
             restoreQuoteCompareSession(state);
+            restoreHistoryUiPreferences(state);
         }
         bindEvents(elements, state);
         exposeApi(elements, state);
