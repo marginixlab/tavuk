@@ -61,10 +61,9 @@
         </header>
 
         <nav class="app-view-nav" aria-label="Primary workspace">
-            <a class="app-view-tab {% if active_view == 'analyzer' %}is-active{% endif %}" href="/" aria-current="{% if active_view == 'analyzer' %}page{% else %}false{% endif %}">Analyzer</a>
+            <a class="app-view-tab {% if active_view == 'quote_compare' %}is-active{% endif %}" href="/" aria-current="{% if active_view == 'quote_compare' %}page{% else %}false{% endif %}">Quote Compare</a>
             <a class="app-view-tab {% if active_view == 'guide' %}is-active{% endif %}" href="/guide" aria-current="{% if active_view == 'guide' %}page{% else %}false{% endif %}">Guide</a>
             <a class="app-view-tab {% if active_view == 'recipes' %}is-active{% endif %}" href="/recipes" aria-current="{% if active_view == 'recipes' %}page{% else %}false{% endif %}">Recipes</a>
-            <a class="app-view-tab {% if active_view == 'quote_compare' %}is-active{% endif %}" href="/quote-compare" aria-current="{% if active_view == 'quote_compare' %}page{% else %}false{% endif %}">Quote Compare</a>
         </nav>
 
         <aside class="side-panel side-panel-right" id="notesPanel" hidden aria-hidden="true">
@@ -87,7 +86,7 @@
             </div>
         </aside>
 
-        {% if active_view == 'analyzer' %}
+        {% if false %}
         <div
             id="mainDashboardView"
             data-has-analysis="{{ 'true' if has_analysis else 'false' }}"
@@ -677,9 +676,8 @@
                             {% endif %}
                         </p>
                         <div class="guide-overview-actions guide-action-list">
-                            <a class="secondary-btn guide-action-button" href="/#uploadPanel">Upload & Analyze</a>
-                            <a class="secondary-btn guide-action-button" href="/#topInsightsPanel">Top Insights</a>
                             <a class="secondary-btn guide-action-button" href="/quote-compare">Quote Compare</a>
+                            <a class="secondary-btn guide-action-button" href="/recipes">Recipes</a>
                         </div>
                     </section>
 
@@ -787,15 +785,16 @@
                     <h1 class="panel-title">Recipe Cost Calculator</h1>
                     <p class="panel-copy">Price recipes from your analyzed Etsy purchase data with a visible pricing mode, reusable saved recipes, and a private-advisor workflow built for fast decisions.</p>
                 </div>
+                <button type="button" class="secondary-btn recipes-library-open-btn" id="openRecipeLibraryButton">View Recipes</button>
             </section>
 
             <section class="recipes-empty-shell" id="recipesNeedsAnalysis" {% if has_analysis %}hidden{% endif %}>
                 <div class="recipes-empty-card">
                     <div class="panel-label">Pricing Data Needed</div>
                     <h2 class="panel-title">Analyze purchase data before pricing recipes</h2>
-                    <p class="panel-copy">Recipes uses analyzed purchasing data to supply product names, units, and pricing inputs. Run Analyzer first, then come back to build recipe costs from real purchase history instead of manual estimates.</p>
+                    <p class="panel-copy">Recipes uses analyzed purchasing data to supply product names, units, and pricing inputs. Open Quote Compare first, then come back to build recipe costs from real purchase history instead of manual estimates.</p>
                     <div class="recipes-empty-actions">
-                        <a class="action-btn" id="recipesEmptyGoToAnalyzerButton" href="/">Analyze Purchasing Data</a>
+                        <a class="action-btn" id="recipesEmptyGoToAnalyzerButton" href="/quote-compare">Open Quote Compare</a>
                     </div>
                 </div>
             </section>
@@ -809,25 +808,13 @@
                                 <div>
                                     <div class="panel-label">Saved Recipes</div>
                                     <h2 class="panel-title">Recipe Cost Calculator</h2>
-                                    <p class="panel-copy">Use your analyzed Etsy purchase data to price recipes with a visible pricing mode and reusable saved recipes.</p>
+                                    <p class="panel-copy">Quick access to your latest saved recipes.</p>
                                 </div>
-                                <button type="button" class="secondary-btn" id="newRecipeButton">New Recipe</button>
+                                <button type="button" class="action-btn recipes-new-recipe-btn" id="newRecipeButton">New Recipe</button>
                             </div>
                             <div class="recipes-list" id="recipesList"></div>
                             <div class="recipes-empty" id="recipesEmpty">Save a recipe to build your own reusable cost library.</div>
-                            <div class="recipes-sidebar-actions" id="recipesSidebarActions" hidden>
-                                <button type="button" class="secondary-btn" id="deleteRecipeButton" hidden>Delete Recipe</button>
-                            </div>
-                            <div class="recipe-delete-confirm recipe-delete-confirm-sidebar" id="recipeDeleteConfirm" hidden>
-                                <div class="recipe-delete-confirm-copy">
-                                    <strong>Are you sure you want to delete this recipe?</strong>
-                                    <span>This action cannot be undone.</span>
-                                </div>
-                                <div class="recipe-delete-confirm-actions">
-                                    <button type="button" class="secondary-btn" id="cancelDeleteRecipeButton">Cancel</button>
-                                    <button type="button" class="action-btn" id="confirmDeleteRecipeButton">Delete</button>
-                                </div>
-                            </div>
+                            <button type="button" class="recipes-view-all-btn" id="openRecipeLibraryInlineButton">View all recipes →</button>
                         </aside>
 
                         <div class="recipes-main">
@@ -868,8 +855,8 @@
                                     </div>
                                     <div class="recipe-ingredients-table-head recipe-ingredient-grid" aria-hidden="true">
                                         <div class="recipe-ingredient-head-cell">Product Name</div>
-                                        <div class="recipe-ingredient-head-cell">Quantity</div>
-                                        <div class="recipe-ingredient-head-cell">Unit</div>
+                                        <div class="recipe-ingredient-head-cell">Usage Qty</div>
+                                        <div class="recipe-ingredient-head-cell">Recipe Unit / Basis</div>
                                         <div class="recipe-ingredient-head-cell recipe-ingredient-head-cell-action">Remove</div>
                                     </div>
                                     <div class="recipe-ingredients-list" id="recipeIngredientsList"></div>
@@ -911,6 +898,32 @@
                         </div>
                     </div>
                 </section>
+            </section>
+            <section class="recipes-library-overlay" id="recipeLibraryOverlay" hidden>
+                <div class="recipes-library-panel" role="dialog" aria-modal="true" aria-labelledby="recipeLibraryTitle">
+                    <div class="recipes-library-head">
+                        <div>
+                            <div class="panel-label">Recipe Library</div>
+                            <h2 class="panel-title" id="recipeLibraryTitle">Recipe Library</h2>
+                            <p class="panel-copy recipes-library-subtitle">Manage, review and reuse your saved recipes.</p>
+                        </div>
+                        <div class="recipes-library-head-actions">
+                            <button type="button" class="action-btn" id="createRecipeFromLibraryButton">+ New Recipe</button>
+                            <button type="button" class="secondary-btn" id="closeRecipeLibraryButton">Close</button>
+                        </div>
+                    </div>
+                    <div class="recipes-library-toolbar">
+                        <input type="text" class="recipe-input recipes-library-search" id="recipeLibrarySearchInput" placeholder="Search recipes..." autocomplete="off">
+                        <select class="recipe-select recipes-library-sort" id="recipeLibrarySortSelect">
+                            <option value="newest">Newest</option>
+                            <option value="oldest">Oldest</option>
+                            <option value="cost_desc">Highest cost</option>
+                            <option value="cost_asc">Lowest cost</option>
+                            <option value="name_asc">Name A-Z</option>
+                        </select>
+                    </div>
+                    <div class="recipes-library-list" id="recipeLibraryList"></div>
+                </div>
             </section>
             </section>
         </section>
@@ -1193,13 +1206,6 @@
         })();
     </script>
     <script defer src="{{ url_for('static', path='/js/access-code.js') }}"></script>
-    {% if active_view == 'analyzer' %}
-    <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script defer src="{{ url_for('static', path='/js/charts.js') }}"></script>
-    <script defer src="{{ url_for('static', path='/js/table.js') }}"></script>
-    <script defer src="{{ url_for('static', path='/js/dashboard.js') }}"></script>
-    <script defer src="{{ url_for('static', path='/js/assistant.js') }}"></script>
-    {% endif %}
     {% if active_view == 'guide' %}
     <script defer src="{{ url_for('static', path='/js/guide-assistant.js') }}"></script>
     {% endif %}

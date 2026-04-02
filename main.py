@@ -1071,6 +1071,9 @@ class RecipeIngredientPayload(BaseModel):
     product_name: str
     quantity: float
     unit: str
+    purchase_unit: str | None = None
+    purchase_size: float | None = None
+    purchase_base_unit: str | None = None
 
 
 class RecipePayload(BaseModel):
@@ -1508,11 +1511,10 @@ GUIDE_ASSISTANT_SYNONYMS = {
     "food": "recipe"
 }
 GUIDE_ACTION_CATALOG = {
-    "go_analyzer": {"label": "Open Analyzer", "href": "/"},
-    "go_upload": {"label": "Go to Upload & Analyze", "href": "/#uploadPanel"},
-    "go_top_insights": {"label": "Go to Top Insights", "href": "/#topInsightsPanel"},
-    "go_workspace": {"label": "Open Workspace Table", "href": "/#workspacePanel"},
-    "go_ask_data": {"label": "Open Ask Your Data", "href": "/#askDataPanel"},
+    "go_upload": {"label": "Open Quote Compare", "href": "/quote-compare"},
+    "go_top_insights": {"label": "Open Quote Compare", "href": "/quote-compare"},
+    "go_workspace": {"label": "Open Quote Compare", "href": "/quote-compare"},
+    "go_ask_data": {"label": "Open Quote Compare", "href": "/quote-compare"},
     "go_quote_compare": {"label": "Open Quote Compare", "href": "/quote-compare"},
     "go_recipes": {"label": "Open Recipes", "href": "/recipes"}
 }
@@ -1799,7 +1801,7 @@ def build_guide_response(question: str) -> dict[str, Any]:
             actions = append_guide_action(actions, "go_recipes")
         elif response_id == "upload-and-mapping" and snapshot["total_rows"] > 0:
             context_note = f"A saved analysis with {snapshot['total_rows']} rows is already available if you want to review before replacing it."
-            actions = append_guide_action(actions, "go_analyzer")
+            actions = append_guide_action(actions, "go_quote_compare")
 
     return {
         **response,
@@ -2266,30 +2268,267 @@ def load_recipe_analysis_dataframe() -> pd.DataFrame:
 def build_recipe_product_catalog(frame: pd.DataFrame) -> list[dict[str, Any]]:
     catalog: list[dict[str, Any]] = []
     for product_name, group in frame.groupby("Product Name", sort=True):
-        units = sorted({str(unit).strip() for unit in group["Unit"].fillna("").tolist() if str(unit).strip()})
+        units = sorted({
+            normalize_recipe_unit_name(unit)
+            for unit in group["Unit"].fillna("").tolist()
+            if normalize_recipe_unit_name(unit)
+        })
         catalog.append({
             "product_name": str(product_name),
-            "units": units
+            "units": units,
+            "purchase_unit": units[0] if units else ""
         })
     return catalog
+
+
+RECIPE_UNIT_ALIASES = {
+    "g": "g",
+    "gram": "g",
+    "grams": "g",
+    "kg": "kg",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "oz": "oz",
+    "ounce": "oz",
+    "ounces": "oz",
+    "lb": "lb",
+    "lbs": "lb",
+    "pound": "lb",
+    "pounds": "lb",
+    "ml": "ml",
+    "milliliter": "ml",
+    "milliliters": "ml",
+    "millilitre": "ml",
+    "millilitres": "ml",
+    "fl oz": "fl oz",
+    "fl. oz": "fl oz",
+    "floz": "fl oz",
+    "fluid ounce": "fl oz",
+    "fluid ounces": "fl oz",
+    "l": "l",
+    "lt": "l",
+    "liter": "l",
+    "liters": "l",
+    "litre": "l",
+    "litres": "l",
+    "each": "each",
+    "ea": "each",
+    "piece": "each",
+    "pieces": "each",
+    "pc": "each",
+    "pcs": "each",
+    "portion": "portion",
+    "portions": "portion",
+    "package": "pack",
+    "packages": "pack",
+    "pack": "pack",
+    "packs": "pack",
+    "box": "box",
+    "boxes": "box",
+    "case": "case",
+    "cases": "case",
+    "carton": "carton",
+    "cartons": "carton",
+    "bottle": "bottle",
+    "bottles": "bottle",
+    "can": "can",
+    "cans": "can",
+    "bag": "bag",
+    "bags": "bag",
+    "jar": "jar",
+    "jars": "jar"
+}
+
+RECIPE_UNIT_FACTORS = {
+    "g": ("weight", 1.0),
+    "oz": ("weight", 28.3495),
+    "kg": ("weight", 1000.0),
+    "lb": ("weight", 453.592),
+    "ml": ("volume", 1.0),
+    "fl oz": ("volume", 29.5735),
+    "l": ("volume", 1000.0),
+    "each": ("count", 1.0),
+    "portion": ("count", 1.0)
+}
+
+RECIPE_UNIT_CATEGORIES = {
+    "g": "weight",
+    "kg": "weight",
+    "oz": "weight",
+    "lb": "weight",
+    "ml": "volume",
+    "l": "volume",
+    "fl oz": "volume",
+    "each": "count",
+    "portion": "count",
+    "pack": "package",
+    "box": "package",
+    "case": "package",
+    "carton": "package",
+    "bottle": "package",
+    "can": "package",
+    "bag": "package",
+    "jar": "package"
+}
+
+RECIPE_BASE_UNITS = {
+    "weight": "g",
+    "volume": "ml",
+    "count": "each"
+}
+
+
+def normalize_recipe_unit_name(unit: str) -> str:
+    normalized_unit = str(unit or "").strip()
+    return RECIPE_UNIT_ALIASES.get(normalized_unit.lower(), normalized_unit)
+
+
+def get_recipe_unit_category(unit: str) -> str:
+    return RECIPE_UNIT_CATEGORIES.get(normalize_recipe_unit_name(unit), "")
+
+
+def resolve_recipe_purchase_base_unit(
+    purchase_unit: str,
+    usage_unit: str,
+    purchase_base_unit: str | None = None
+) -> str:
+    normalized_purchase_unit = normalize_recipe_unit_name(purchase_unit)
+    normalized_usage_unit = normalize_recipe_unit_name(usage_unit)
+    normalized_base_unit = normalize_recipe_unit_name(purchase_base_unit or "")
+    purchase_category = get_recipe_unit_category(normalized_purchase_unit)
+    base_category = get_recipe_unit_category(normalized_base_unit)
+
+    if purchase_category == "package":
+        if base_category and base_category != "package":
+            return RECIPE_BASE_UNITS.get(base_category, normalized_base_unit)
+        usage_category = get_recipe_unit_category(normalized_usage_unit)
+        if usage_category and usage_category != "package":
+            return RECIPE_BASE_UNITS.get(usage_category, normalized_usage_unit)
+        return "each"
+
+    return RECIPE_BASE_UNITS.get(purchase_category, normalized_purchase_unit)
+
+
+def infer_recipe_purchase_size(
+    purchase_unit: str,
+    usage_unit: str,
+    purchase_base_unit: str | None = None
+) -> float:
+    normalized_purchase_unit = normalize_recipe_unit_name(purchase_unit)
+    normalized_usage_unit = normalize_recipe_unit_name(usage_unit)
+    resolved_base_unit = resolve_recipe_purchase_base_unit(purchase_unit, usage_unit, purchase_base_unit)
+    if not normalized_purchase_unit or not normalized_usage_unit:
+        return 1.0
+    if normalized_purchase_unit == resolved_base_unit:
+        return 1.0
+
+    if get_recipe_unit_category(normalized_purchase_unit) == "package":
+        return 0.0
+
+    purchase_meta = RECIPE_UNIT_FACTORS.get(normalized_purchase_unit)
+    base_meta = RECIPE_UNIT_FACTORS.get(resolved_base_unit)
+    if purchase_meta and base_meta and purchase_meta[0] == base_meta[0] and base_meta[1] > 0:
+        return purchase_meta[1] / base_meta[1]
+
+    return 1.0
+
+
+def convert_recipe_quantity_to_base(quantity: float, source_unit: str, base_unit: str) -> float:
+    normalized_source_unit = normalize_recipe_unit_name(source_unit)
+    normalized_base_unit = normalize_recipe_unit_name(base_unit)
+    if normalized_source_unit == normalized_base_unit:
+        return quantity
+
+    source_meta = RECIPE_UNIT_FACTORS.get(normalized_source_unit)
+    base_meta = RECIPE_UNIT_FACTORS.get(normalized_base_unit)
+    if not source_meta or not base_meta or source_meta[0] != base_meta[0] or base_meta[1] <= 0:
+        raise ValueError("Selected unit type does not match product type.")
+
+    return quantity * (source_meta[1] / base_meta[1])
+
+
+def resolve_recipe_usage_ratio(
+    quantity: float,
+    usage_unit: str,
+    purchase_unit: str,
+    purchase_size: float,
+    purchase_base_unit: str | None = None
+) -> tuple[float, float, str]:
+    normalized_usage_unit = normalize_recipe_unit_name(usage_unit)
+    normalized_purchase_unit = normalize_recipe_unit_name(purchase_unit)
+    resolved_base_unit = resolve_recipe_purchase_base_unit(
+        normalized_purchase_unit,
+        normalized_usage_unit,
+        purchase_base_unit
+    )
+    purchase_category = get_recipe_unit_category(normalized_purchase_unit)
+    usage_category = get_recipe_unit_category(normalized_usage_unit)
+    base_category = get_recipe_unit_category(resolved_base_unit)
+
+    if (
+        not normalized_usage_unit
+        or not normalized_purchase_unit
+        or not resolved_base_unit
+        or usage_category == "package"
+        or base_category == "package"
+        or (purchase_category != "package" and purchase_category != usage_category)
+        or (purchase_category == "package" and usage_category != base_category)
+    ):
+        raise ValueError("Selected unit type does not match product type.")
+
+    effective_purchase_size = purchase_size
+    if effective_purchase_size <= 0:
+        effective_purchase_size = infer_recipe_purchase_size(
+            normalized_purchase_unit,
+            normalized_usage_unit,
+            resolved_base_unit
+        )
+    if effective_purchase_size <= 0:
+        raise ValueError("Each ingredient must include a valid conversion basis.")
+
+    usage_quantity_in_base_unit = convert_recipe_quantity_to_base(
+        quantity,
+        normalized_usage_unit,
+        resolved_base_unit
+    )
+    purchase_ratio = usage_quantity_in_base_unit / effective_purchase_size
+    return purchase_ratio, usage_quantity_in_base_unit, resolved_base_unit
 
 
 def normalize_recipe_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized_ingredients: list[dict[str, Any]] = []
     for ingredient in payload.get("ingredients", []):
         product_name = str(ingredient.get("product_name", "")).strip()
-        unit = str(ingredient.get("unit", "")).strip()
+        unit = normalize_recipe_unit_name(ingredient.get("unit", ""))
+        purchase_unit = normalize_recipe_unit_name(ingredient.get("purchase_unit") or ingredient.get("unit", ""))
+        purchase_base_unit = resolve_recipe_purchase_base_unit(
+            purchase_unit,
+            unit,
+            ingredient.get("purchase_base_unit") or ingredient.get("conversion_unit")
+        )
+        if get_recipe_unit_category(unit) == "package":
+            unit = purchase_base_unit
         quantity_raw = normalize_request_value(ingredient.get("quantity", 0))
+        purchase_size_raw = normalize_request_value(ingredient.get("purchase_size", 0))
         try:
             quantity = float(quantity_raw)
         except (TypeError, ValueError):
             quantity = 0.0
-        if not product_name and not unit and quantity <= 0:
+        try:
+            purchase_size = float(purchase_size_raw)
+        except (TypeError, ValueError):
+            purchase_size = 0.0
+        if purchase_size <= 0:
+            purchase_size = infer_recipe_purchase_size(purchase_unit, unit, purchase_base_unit)
+        if not product_name and not unit and not purchase_unit and quantity <= 0:
             continue
         normalized_ingredients.append({
             "product_name": product_name,
             "quantity": quantity,
-            "unit": unit
+            "unit": unit,
+            "purchase_unit": purchase_unit,
+            "purchase_size": purchase_size,
+            "purchase_base_unit": purchase_base_unit
         })
 
     return {
@@ -2312,8 +2551,26 @@ def validate_recipe_payload(recipe: dict[str, Any]) -> None:
         raise ValueError("Add at least one ingredient before calculating the recipe.")
 
     for ingredient in recipe["ingredients"]:
-        if not ingredient["product_name"] or not ingredient["unit"] or ingredient["quantity"] <= 0:
-            raise ValueError("Each ingredient must include a product, quantity, and unit.")
+        if (
+            not ingredient["product_name"]
+            or not ingredient["unit"]
+            or not ingredient["purchase_unit"]
+            or not ingredient.get("purchase_base_unit")
+            or ingredient["quantity"] <= 0
+            or ingredient["purchase_size"] <= 0
+        ):
+            raise ValueError("Each ingredient must include a product, usage quantity, recipe unit, purchase unit, and valid conversion basis.")
+
+        purchase_category = get_recipe_unit_category(ingredient["purchase_unit"])
+        usage_category = get_recipe_unit_category(ingredient["unit"])
+        base_category = get_recipe_unit_category(ingredient.get("purchase_base_unit", ""))
+        if (
+            usage_category == "package"
+            or base_category == "package"
+            or (purchase_category != "package" and purchase_category != usage_category)
+            or (purchase_category == "package" and usage_category != base_category)
+        ):
+            raise ValueError("Selected unit type does not match product type.")
 
 
 def resolve_recipe_price(filtered_rows: pd.DataFrame, pricing_mode: str) -> tuple[float, str]:
@@ -2338,14 +2595,22 @@ def calculate_recipe_cost(recipe: dict[str, Any], frame: pd.DataFrame) -> dict[s
         if product_rows.empty:
             raise ValueError(f"'{ingredient['product_name']}' was not found in the analyzed purchase dataset.")
 
-        unit_rows = product_rows[product_rows["Unit"] == ingredient["unit"]].copy()
+        product_rows["Unit"] = product_rows["Unit"].apply(normalize_recipe_unit_name)
+        unit_rows = product_rows[product_rows["Unit"] == ingredient["purchase_unit"]].copy()
         if unit_rows.empty:
             raise ValueError(
-                f"No analyzed pricing was found for {ingredient['product_name']} with unit '{ingredient['unit']}'."
+                f"No analyzed pricing was found for {ingredient['product_name']} with purchase unit '{ingredient['purchase_unit']}'."
             )
 
         price_used, pricing_label = resolve_recipe_price(unit_rows, recipe["pricing_mode"])
-        ingredient_cost = round(price_used * ingredient["quantity"], 4)
+        purchase_ratio, usage_quantity_in_base_unit, purchase_base_unit = resolve_recipe_usage_ratio(
+            float(ingredient["quantity"]),
+            ingredient["unit"],
+            ingredient["purchase_unit"],
+            float(ingredient["purchase_size"] or 1),
+            ingredient.get("purchase_base_unit")
+        )
+        ingredient_cost = round(price_used * purchase_ratio, 4)
         latest_supplier = (
             unit_rows.sort_values("Date", ascending=False, na_position="last").iloc[0]["Supplier"]
             if not unit_rows.empty else ""
@@ -2355,6 +2620,11 @@ def calculate_recipe_cost(recipe: dict[str, Any], frame: pd.DataFrame) -> dict[s
             "product_name": ingredient["product_name"],
             "quantity": round(float(ingredient["quantity"]), 4),
             "unit": ingredient["unit"],
+            "purchase_unit": ingredient["purchase_unit"],
+            "purchase_base_unit": purchase_base_unit,
+            "purchase_size": round(float(ingredient["purchase_size"] or 1), 4),
+            "purchase_ratio": round(float(purchase_ratio), 6),
+            "usage_quantity_in_base_unit": round(float(usage_quantity_in_base_unit), 6),
             "price_used": round(price_used, 4),
             "pricing_label": pricing_label,
             "ingredient_cost": round(ingredient_cost, 4),
@@ -2373,6 +2643,22 @@ def calculate_recipe_cost(recipe: dict[str, Any], frame: pd.DataFrame) -> dict[s
         "main_cost_driver": main_cost_driver,
         "ingredient_breakdown": breakdown
     }
+
+
+def enrich_saved_recipes_with_costs(recipes: list[dict[str, Any]], frame: pd.DataFrame) -> list[dict[str, Any]]:
+    enriched_recipes: list[dict[str, Any]] = []
+    for recipe in recipes or []:
+        enriched_recipe = {**recipe}
+        try:
+            normalized_recipe = normalize_recipe_payload(recipe)
+            calculation = calculate_recipe_cost(normalized_recipe, frame)
+            enriched_recipe["total_recipe_cost"] = calculation["total_recipe_cost"]
+            enriched_recipe["cost_per_portion"] = calculation["cost_per_portion"]
+        except ValueError:
+            enriched_recipe["total_recipe_cost"] = float(recipe.get("total_recipe_cost") or 0)
+            enriched_recipe["cost_per_portion"] = float(recipe.get("cost_per_portion") or 0)
+        enriched_recipes.append(enriched_recipe)
+    return enriched_recipes
 
 
 def normalize_ai_rows(rows: list[dict[str, Any]] | None = None) -> pd.DataFrame:
@@ -3050,7 +3336,7 @@ def load_latest_analysis_context(*, source_name: str | None = None, demo_mode: b
 def build_page_context(
     request: Request,
     *,
-    active_view: str = "analyzer"
+    active_view: str = "quote_compare"
 ) -> dict[str, Any]:
     context_started_at = perf_counter()
     has_analysis = LATEST_RESULTS_PATH.exists()
@@ -3118,7 +3404,7 @@ def create_app() -> FastAPI:
         return safe_template_response(
             request,
             INDEX_TEMPLATE,
-            build_page_context(request, active_view="analyzer")
+            build_page_context(request, active_view="quote_compare")
         )
 
     @app.get("/recipes")
@@ -3176,33 +3462,6 @@ def create_app() -> FastAPI:
             "session_id": None
         }
 
-    @app.get("/download-sample")
-    def download_sample():
-        sample_df = build_sample_dataframe()
-        output = dataframe_to_excel_stream(sample_df, "Sample Data")
-
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=sample_data.xlsx"}
-        )
-
-    @app.get("/download-sample-csv")
-    def download_sample_csv():
-        sample_df = build_sample_dataframe()
-        output = io.StringIO()
-        sample_df.to_csv(output, index=False)
-
-        return StreamingResponse(
-            io.BytesIO(output.getvalue().encode("utf-8")),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=sample_data.csv"}
-        )
-
-    @app.get("/download-sample-excel")
-    def download_sample_excel():
-        return download_sample()
-
     @app.get("/quote-compare/download-sample-csv")
     def download_quote_compare_sample_csv():
         sample_df = build_quote_compare_sample_dataframe()
@@ -3225,250 +3484,6 @@ def create_app() -> FastAPI:
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": "attachment; filename=quote_compare_sample.xlsx"}
         )
-
-    @app.get("/download-results")
-    def download_results():
-        if LATEST_RESULTS_PATH.exists():
-            return FileResponse(
-                str(LATEST_RESULTS_PATH),
-                media_type="text/csv",
-                filename="price_analysis_results.csv"
-            )
-        return build_home_redirect(error="No results available yet. Please upload a file first.")
-
-    @app.get("/download-results-excel")
-    def download_results_excel():
-        if not LATEST_RESULTS_PATH.exists():
-            return build_home_redirect(error="No results available yet. Please upload a file first.")
-
-        result_df = pd.read_csv(LATEST_RESULTS_PATH)
-        output = dataframe_to_excel_stream(result_df, "Price Analysis Results")
-
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=price_analysis_results.xlsx"}
-        )
-
-    @app.get("/analysis/bootstrap")
-    def analysis_bootstrap():
-        if not LATEST_RESULTS_PATH.exists():
-            return {
-                "success": True,
-                "has_analysis": False,
-                "analysis_source": "empty",
-                "rows": []
-            }
-
-        payload = load_latest_analysis_context()
-        payload["success"] = True
-        payload["analysis_source"] = "restored_analysis"
-        return payload
-
-    @app.post("/upload")
-    async def upload_file(request: Request, file: UploadFile = File(...)):
-        filename = file.filename or ""
-        json_response = wants_json_response(request)
-
-        try:
-            df = read_uploaded_dataframe(file)
-        except ValueError as exc:
-            error_message = str(exc)
-            if json_response:
-                return JSONResponse(
-                    {"success": False, "message": error_message},
-                    status_code=400
-                )
-            return build_home_redirect(error=error_message)
-        except Exception:
-            logger.exception("Failed to read uploaded file: %s", filename)
-            error_message = "The file could not be read. Please upload a valid CSV or Excel file (.csv, .xlsx, or .xls)."
-            if json_response:
-                return JSONResponse(
-                    {"success": False, "message": error_message},
-                    status_code=400
-                )
-            return build_home_redirect(
-                error=error_message
-            )
-
-        try:
-            review_payload = build_mapping_review_payload(df, filename=filename)
-            mapped_df = apply_column_mapping(df, review_payload["mapping"])
-            analysis_context = analyze_dataframe(mapped_df, source_name=filename)
-        except ValueError as exc:
-            if json_response:
-                return JSONResponse(
-                    {"success": False, "message": str(exc)},
-                    status_code=400
-                )
-            return build_home_redirect(error=str(exc))
-
-        if json_response:
-            return JSONResponse({
-                "success": True,
-                **analysis_context
-            })
-
-        return build_home_redirect(
-            results="1",
-            filename=filename
-        )
-
-    @app.post("/upload/inspect")
-    async def inspect_upload_file(file: UploadFile = File(...)):
-        filename = file.filename or ""
-
-        try:
-            df = read_uploaded_dataframe(file)
-        except ValueError as exc:
-            return JSONResponse(
-                {"success": False, "message": str(exc)},
-                status_code=400
-            )
-        except Exception:
-            logger.exception("Failed to inspect uploaded file: %s", filename)
-            return JSONResponse(
-                {
-                    "success": False,
-                    "message": "The file could not be read. Please upload a valid CSV or Excel file (.csv, .xlsx, or .xls)."
-                },
-                status_code=400
-            )
-
-        payload = {
-            "success": True,
-            **build_mapping_review_payload(df, filename=filename)
-        }
-        logger.info(
-            "[upload debug] /upload/inspect response for %s: keys=%s",
-            filename,
-            sorted(payload.keys())
-        )
-        return JSONResponse(payload)
-
-    @app.post("/upload/confirm")
-    async def confirm_upload_file(
-        file: UploadFile = File(...),
-        mappings: str = Form(...)
-    ):
-        filename = file.filename or ""
-
-        try:
-            df = read_uploaded_dataframe(file)
-        except ValueError as exc:
-            return JSONResponse(
-                {"success": False, "message": str(exc)},
-                status_code=400
-            )
-        except Exception:
-            logger.exception("Failed to read uploaded file for confirmed mapping: %s", filename)
-            return JSONResponse(
-                {
-                    "success": False,
-                    "message": "The file could not be read. Please upload a valid CSV or Excel file (.csv, .xlsx, or .xls)."
-                },
-                status_code=400
-            )
-
-        try:
-            parsed_mapping = json.loads(mappings)
-            if not isinstance(parsed_mapping, dict):
-                raise ValueError
-        except ValueError:
-            return JSONResponse(
-                {"success": False, "message": "The selected column mappings could not be understood. Please review them and try again."},
-                status_code=400
-            )
-
-        try:
-            mapped_df = apply_column_mapping(
-                df,
-                {field_name: parsed_mapping.get(field_name) for field_name in REQUIRED_ANALYSIS_FIELDS}
-            )
-            analysis_context = analyze_dataframe(mapped_df, source_name=filename)
-        except ValueError as exc:
-            return JSONResponse(
-                {"success": False, "message": str(exc)},
-                status_code=400
-            )
-
-        return JSONResponse({
-            "success": True,
-            **analysis_context
-        })
-
-    @app.post("/demo-data")
-    def demo_data(request: Request):
-        json_response = wants_json_response(request)
-
-        try:
-            analysis_context = analyze_dataframe(build_sample_dataframe(), source_name="Demo dataset")
-        except ValueError as exc:
-            logger.exception("Demo data analysis failed")
-            if json_response:
-                return JSONResponse(
-                    {"success": False, "message": str(exc)},
-                    status_code=400
-                )
-            return build_home_redirect(error=str(exc))
-        except Exception:
-            logger.exception("Unexpected demo data load failure")
-            error_message = "Demo data could not be loaded right now. Please try again."
-            if json_response:
-                return JSONResponse(
-                    {"success": False, "message": error_message},
-                    status_code=500
-                )
-            return build_home_redirect(error=error_message)
-
-        if json_response:
-            return JSONResponse({
-                "success": True,
-                "demo_mode": True,
-                **analysis_context
-            })
-
-        return build_home_redirect(
-            results="1",
-            filename="Demo dataset",
-            demo_mode="1"
-        )
-
-    @app.post("/clear")
-    def clear_analysis():
-        if LATEST_RESULTS_PATH.exists():
-            LATEST_RESULTS_PATH.unlink()
-            logger.info("Cleared persisted analysis at %s", LATEST_RESULTS_PATH)
-        return build_home_redirect()
-
-    @app.post("/ask-data")
-    def ask_data(payload: AskDataPayload):
-        question = (payload.question or "").strip()
-        if not question:
-            return JSONResponse(
-                {"success": False, "message": "Please enter a question before running AI insights."},
-                status_code=400
-            )
-
-        try:
-            answer = build_ai_answer(question, payload.rows)
-        except ValueError as exc:
-            return JSONResponse(
-                {"success": False, "message": str(exc)},
-                status_code=400
-            )
-        except Exception:
-            logger.exception("Failed to generate AI data answer")
-            return JSONResponse(
-                {"success": False, "message": "AI insights could not be generated from the current dataset."},
-                status_code=500
-            )
-
-        return JSONResponse({
-            "success": True,
-            **answer
-        })
 
     @app.post("/guide/ask")
     def guide_ask(payload: GuideAskPayload):
@@ -3500,7 +3515,7 @@ def create_app() -> FastAPI:
                 for value, label in RECIPE_PRICING_MODES.items()
             ],
             "products": build_recipe_product_catalog(frame),
-            "recipes": recipes
+            "recipes": enrich_saved_recipes_with_costs(recipes, frame)
         })
 
     @app.post("/recipes/calculate")
@@ -3539,6 +3554,8 @@ def create_app() -> FastAPI:
             "yield_portions": normalized_recipe["yield_portions"],
             "pricing_mode": normalized_recipe["pricing_mode"],
             "ingredients": normalized_recipe["ingredients"],
+            "total_recipe_cost": calculation["total_recipe_cost"],
+            "cost_per_portion": calculation["cost_per_portion"],
             "updated_at": now,
             "created_at": existing_recipe.get("created_at") if existing_recipe else now
         }
@@ -3555,7 +3572,7 @@ def create_app() -> FastAPI:
             "success": True,
             "recipe": saved_recipe,
             "calculation": calculation,
-            "recipes": recipes,
+            "recipes": enrich_saved_recipes_with_costs(recipes, frame),
             "message": f"Recipe saved: {saved_recipe['name']}"
         })
 
@@ -3575,10 +3592,16 @@ def create_app() -> FastAPI:
         store["recipes"] = updated_recipes
         save_recipes_store(store)
 
+        try:
+            frame = load_recipe_analysis_dataframe()
+            response_recipes = enrich_saved_recipes_with_costs(updated_recipes, frame)
+        except ValueError:
+            response_recipes = updated_recipes
+
         return JSONResponse({
             "success": True,
             "deleted_recipe_id": recipe_id,
-            "recipes": updated_recipes,
+            "recipes": response_recipes,
             "message": f"Deleted recipe: {existing_recipe.get('name', 'Recipe')}"
         })
 
