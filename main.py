@@ -228,6 +228,11 @@ RECIPE_PRICING_MODES = {
     "latest_price": "Latest Price",
     "average_price": "Average Price"
 }
+RECIPE_PRICING_GOAL_TYPES = {
+    "food_cost_pct": "Target Food Cost %",
+    "gross_margin_pct": "Target Gross Margin %",
+    "markup_pct": "Markup %"
+}
 QUOTE_COMPARE_DEFAULT_WEIGHTS = {
     "price": 0.5,
     "delivery": 0.25,
@@ -1101,6 +1106,8 @@ class RecipePayload(BaseModel):
     pricing_mode: str
     ingredients: list[RecipeIngredientPayload]
     selling_price: float | None = None
+    pricing_goal_type: str | None = None
+    pricing_goal_value: float | None = None
     target_food_cost_pct: float | None = None
     total_recipe_cost: float | None = None
     cost_per_portion: float | None = None
@@ -3006,6 +3013,9 @@ def normalize_recipe_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "purchase_base_unit": purchase_base_unit
         })
 
+    pricing_goal_value_raw = normalize_request_value(payload.get("pricing_goal_value"))
+    target_food_cost_raw = normalize_request_value(payload.get("target_food_cost_pct", 0))
+
     return {
         "recipe_id": str(payload.get("recipe_id") or "").strip() or None,
         "name": str(payload.get("name", "")).strip(),
@@ -3013,7 +3023,17 @@ def normalize_recipe_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "pricing_mode": str(payload.get("pricing_mode", "")).strip(),
         "ingredients": normalized_ingredients,
         "selling_price": float(normalize_request_value(payload.get("selling_price", 0)) or 0),
-        "target_food_cost_pct": float(normalize_request_value(payload.get("target_food_cost_pct", 0)) or 0),
+        "pricing_goal_type": str(payload.get("pricing_goal_type") or "food_cost_pct").strip() or "food_cost_pct",
+        "pricing_goal_value": (
+            float(pricing_goal_value_raw)
+            if pricing_goal_value_raw is not None
+            else (
+                float(target_food_cost_raw)
+                if "pricing_goal_value" not in payload and target_food_cost_raw is not None
+                else None
+            )
+        ),
+        "target_food_cost_pct": float(target_food_cost_raw or 0),
         "total_recipe_cost": float(normalize_request_value(payload.get("total_recipe_cost", 0)) or 0),
         "cost_per_portion": float(normalize_request_value(payload.get("cost_per_portion", 0)) or 0),
         "gross_profit": float(normalize_request_value(payload.get("gross_profit", 0)) or 0),
@@ -3132,20 +3152,39 @@ def calculate_recipe_cost(recipe: dict[str, Any], frame: pd.DataFrame) -> dict[s
 def calculate_recipe_pricing_metrics(
     recipe: dict[str, Any],
     calculation: dict[str, Any]
-) -> dict[str, float]:
+) -> dict[str, Any]:
     cost_per_portion = float(calculation.get("cost_per_portion") or 0)
     total_recipe_cost = float(calculation.get("total_recipe_cost") or 0)
     selling_price = float(recipe.get("selling_price") or 0)
-    target_food_cost_pct = float(recipe.get("target_food_cost_pct") or 0)
+    pricing_goal_type = str(recipe.get("pricing_goal_type") or "food_cost_pct").strip()
+    if pricing_goal_type not in RECIPE_PRICING_GOAL_TYPES:
+        pricing_goal_type = "food_cost_pct"
+    pricing_goal_value = (
+        float(recipe.get("pricing_goal_value"))
+        if recipe.get("pricing_goal_value") is not None
+        else None
+    )
+    target_food_cost_pct = (
+        float(pricing_goal_value or 0)
+        if pricing_goal_type == "food_cost_pct"
+        else float(recipe.get("target_food_cost_pct") or 0)
+    )
     gross_profit = selling_price - cost_per_portion if selling_price > 0 else 0.0
     gross_margin_pct = ((gross_profit / selling_price) * 100) if selling_price > 0 else 0.0
     food_cost_pct = ((cost_per_portion / selling_price) * 100) if selling_price > 0 else 0.0
-    suggested_selling_price = (
-        cost_per_portion / (target_food_cost_pct / 100)
-        if target_food_cost_pct > 0 else 0.0
-    )
+    suggested_selling_price = 0.0
+    if pricing_goal_value is not None and pricing_goal_value >= 0 and cost_per_portion > 0:
+        goal_rate = pricing_goal_value / 100
+        if pricing_goal_type == "food_cost_pct" and goal_rate > 0:
+            suggested_selling_price = cost_per_portion / goal_rate
+        elif pricing_goal_type == "gross_margin_pct" and 0 <= goal_rate < 1:
+            suggested_selling_price = cost_per_portion / (1 - goal_rate)
+        elif pricing_goal_type == "markup_pct":
+            suggested_selling_price = cost_per_portion * (1 + goal_rate)
     return {
         "selling_price": round(selling_price, 2),
+        "pricing_goal_type": pricing_goal_type,
+        "pricing_goal_value": round(pricing_goal_value, 2) if pricing_goal_value is not None else None,
         "target_food_cost_pct": round(target_food_cost_pct, 2),
         "total_recipe_cost": round(total_recipe_cost, 2),
         "cost_per_portion": round(cost_per_portion, 2),

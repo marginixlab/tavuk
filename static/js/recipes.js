@@ -91,6 +91,17 @@
         each: { type: "count", factor: 1 },
         portion: { type: "count", factor: 1 }
     };
+    const DEFAULT_PRICING_GOAL_TYPE = "food_cost_pct";
+    const PRICING_GOAL_LABELS = {
+        food_cost_pct: "Target Food Cost %",
+        gross_margin_pct: "Target Gross Margin %",
+        markup_pct: "Markup %"
+    };
+    const PRICING_GOAL_HELPERS = {
+        food_cost_pct: "Target Food Cost % estimates the menu price by keeping food cost at your chosen percentage.",
+        gross_margin_pct: "Target Gross Margin % estimates the menu price needed to protect your preferred gross margin.",
+        markup_pct: "Markup % estimates the menu price by adding your chosen percentage on top of cost per portion."
+    };
 
     function getElements() {
         return {
@@ -121,7 +132,10 @@
             recipeMainCostDriver: document.getElementById("recipeMainCostDriver"),
             recipeMainCostDriverCopy: document.getElementById("recipeMainCostDriverCopy"),
             recipeSellingPriceInput: document.getElementById("recipeSellingPriceInput"),
+            recipePricingGoalTypeSelect: document.getElementById("recipePricingGoalTypeSelect"),
             recipeTargetFoodCostInput: document.getElementById("recipeTargetFoodCostInput"),
+            recipePricingGoalValueLabel: document.getElementById("recipePricingGoalValueLabel"),
+            recipePricingGoalHelper: document.getElementById("recipePricingGoalHelper"),
             recipePricingTotalCost: document.getElementById("recipePricingTotalCost"),
             recipePricingCostPerPortion: document.getElementById("recipePricingCostPerPortion"),
             recipeGrossProfitValue: document.getElementById("recipeGrossProfitValue"),
@@ -175,9 +189,51 @@
         if (elements?.recipeSellingPriceInput) {
             state.sellingPrice = elements.recipeSellingPriceInput.value;
         }
+        if (elements?.recipePricingGoalTypeSelect) {
+            state.pricingGoalType = elements.recipePricingGoalTypeSelect.value || DEFAULT_PRICING_GOAL_TYPE;
+        }
         if (elements?.recipeTargetFoodCostInput) {
+            state.pricingGoalValue = elements.recipeTargetFoodCostInput.value;
             state.targetFoodCostPct = elements.recipeTargetFoodCostInput.value;
         }
+    }
+
+    function getValidPricingGoalType(value) {
+        return PRICING_GOAL_LABELS[value] ? value : DEFAULT_PRICING_GOAL_TYPE;
+    }
+
+    function parsePositiveNumber(value) {
+        const parsedValue = Number(value);
+        return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : null;
+    }
+
+    function parseGoalRatePercent(value) {
+        const normalizedValue = String(value ?? "").trim();
+        if (!normalizedValue) {
+            return null;
+        }
+        const parsedValue = Number(normalizedValue);
+        return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
+    }
+
+    function getSuggestedPriceFromGoal(costPerPortion, goalType, goalValue) {
+        const safeCost = parsePositiveNumber(costPerPortion);
+        const safeGoalValue = parseGoalRatePercent(goalValue);
+        const normalizedGoalType = getValidPricingGoalType(goalType);
+        if (safeCost === null || safeGoalValue === null) {
+            return null;
+        }
+        const goalRate = safeGoalValue / 100;
+        if (normalizedGoalType === "food_cost_pct") {
+            return goalRate > 0 ? safeCost / goalRate : null;
+        }
+        if (normalizedGoalType === "gross_margin_pct") {
+            return goalRate >= 0 && goalRate < 1 ? safeCost / (1 - goalRate) : null;
+        }
+        if (normalizedGoalType === "markup_pct") {
+            return safeCost * (1 + goalRate);
+        }
+        return null;
     }
 
     function hasAnalysis(elements) {
@@ -311,6 +367,9 @@
             name: "",
             yield_portions: 1,
             pricing_mode: DEFAULT_PRICING_MODE,
+            pricing_goal_type: DEFAULT_PRICING_GOAL_TYPE,
+            pricing_goal_value: "",
+            target_food_cost_pct: 0,
             ingredients: [createEmptyIngredient()]
         };
     }
@@ -379,6 +438,12 @@
         normalizedRecipe.yield_portions = normalizedRecipe.yield_portions || 1;
         normalizedRecipe.pricing_mode = normalizedRecipe.pricing_mode || DEFAULT_PRICING_MODE;
         normalizedRecipe.selling_price = Number(normalizedRecipe.selling_price || 0);
+        normalizedRecipe.pricing_goal_type = getValidPricingGoalType(normalizedRecipe.pricing_goal_type || DEFAULT_PRICING_GOAL_TYPE);
+        normalizedRecipe.pricing_goal_value = Number(
+            normalizedRecipe.pricing_goal_value
+            || normalizedRecipe.target_food_cost_pct
+            || 0
+        );
         normalizedRecipe.target_food_cost_pct = Number(normalizedRecipe.target_food_cost_pct || 0);
         normalizedRecipe.total_recipe_cost = Number(normalizedRecipe.total_recipe_cost || 0);
         normalizedRecipe.cost_per_portion = Number(normalizedRecipe.cost_per_portion || 0);
@@ -413,6 +478,8 @@
             recipeLibrarySort: "newest",
             scopeSummary: null,
             sellingPrice: "",
+            pricingGoalType: DEFAULT_PRICING_GOAL_TYPE,
+            pricingGoalValue: "",
             targetFoodCostPct: "",
             statusTimer: null
         };
@@ -471,6 +538,8 @@
         renderPricingPanel(elements, {
             calculation: null,
             sellingPrice: "",
+            pricingGoalType: DEFAULT_PRICING_GOAL_TYPE,
+            pricingGoalValue: "",
             targetFoodCostPct: ""
         });
     }
@@ -480,15 +549,17 @@
         const totalRecipeCost = Number(calculation?.total_recipe_cost || 0);
         const costPerPortion = Number(calculation?.cost_per_portion || 0);
         const sellingPriceValue = state?.sellingPrice ?? elements?.recipeSellingPriceInput?.value ?? "";
-        const targetFoodCostValue = state?.targetFoodCostPct ?? elements?.recipeTargetFoodCostInput?.value ?? "";
-        const sellingPrice = Number(sellingPriceValue || 0);
-        const targetFoodCostPct = Number(targetFoodCostValue || 0);
-        const hasSellingPrice = sellingPrice > 0;
-        const hasTargetFoodCost = targetFoodCostPct > 0;
-        const grossProfit = hasSellingPrice ? sellingPrice - costPerPortion : null;
-        const grossMarginPct = hasSellingPrice ? ((sellingPrice - costPerPortion) / sellingPrice) * 100 : null;
-        const foodCostPct = hasSellingPrice ? (costPerPortion / sellingPrice) * 100 : null;
-        const suggestedSellingPrice = hasTargetFoodCost ? costPerPortion / (targetFoodCostPct / 100) : null;
+        const pricingGoalType = getValidPricingGoalType(
+            state?.pricingGoalType
+            ?? elements?.recipePricingGoalTypeSelect?.value
+            ?? DEFAULT_PRICING_GOAL_TYPE
+        );
+        const goalValue = state?.pricingGoalValue ?? state?.targetFoodCostPct ?? elements?.recipeTargetFoodCostInput?.value ?? "";
+        const sellingPrice = parsePositiveNumber(sellingPriceValue);
+        const grossProfit = sellingPrice === null ? null : sellingPrice - costPerPortion;
+        const grossMarginPct = sellingPrice === null ? null : ((sellingPrice - costPerPortion) / sellingPrice) * 100;
+        const foodCostPct = sellingPrice === null ? null : (costPerPortion / sellingPrice) * 100;
+        const suggestedSellingPrice = getSuggestedPriceFromGoal(costPerPortion, pricingGoalType, goalValue);
 
         return {
             totalRecipeCost,
@@ -496,24 +567,42 @@
             grossProfit,
             grossMarginPct,
             foodCostPct,
-            suggestedSellingPrice
+            suggestedSellingPrice,
+            pricingGoalType,
+            pricingGoalValue: String(goalValue ?? "").trim() === "" ? null : Number(goalValue || 0)
         };
     }
 
     function renderPricingPanel(elements, state) {
         syncPricingInputsFromElements(elements, state);
         const liveSellingPrice = state?.sellingPrice ?? elements?.recipeSellingPriceInput?.value ?? "";
-        const liveTargetFoodCostPct = state?.targetFoodCostPct ?? elements?.recipeTargetFoodCostInput?.value ?? "";
+        const livePricingGoalType = getValidPricingGoalType(
+            state?.pricingGoalType
+            ?? elements?.recipePricingGoalTypeSelect?.value
+            ?? DEFAULT_PRICING_GOAL_TYPE
+        );
+        const livePricingGoalValue = state?.pricingGoalValue ?? state?.targetFoodCostPct ?? elements?.recipeTargetFoodCostInput?.value ?? "";
         const metrics = getPricingMetrics({
             ...state,
             sellingPrice: liveSellingPrice,
-            targetFoodCostPct: liveTargetFoodCostPct
+            pricingGoalType: livePricingGoalType,
+            pricingGoalValue: livePricingGoalValue,
+            targetFoodCostPct: livePricingGoalValue
         }, elements);
         if (elements.recipeSellingPriceInput && document.activeElement !== elements.recipeSellingPriceInput) {
             elements.recipeSellingPriceInput.value = liveSellingPrice;
         }
+        if (elements.recipePricingGoalTypeSelect && document.activeElement !== elements.recipePricingGoalTypeSelect) {
+            elements.recipePricingGoalTypeSelect.value = livePricingGoalType;
+        }
+        if (elements.recipePricingGoalValueLabel) {
+            elements.recipePricingGoalValueLabel.textContent = `${PRICING_GOAL_LABELS[livePricingGoalType] || "Goal Value"} (%)`;
+        }
+        if (elements.recipePricingGoalHelper) {
+            elements.recipePricingGoalHelper.textContent = PRICING_GOAL_HELPERS[livePricingGoalType] || PRICING_GOAL_HELPERS[DEFAULT_PRICING_GOAL_TYPE];
+        }
         if (elements.recipeTargetFoodCostInput && document.activeElement !== elements.recipeTargetFoodCostInput) {
-            elements.recipeTargetFoodCostInput.value = liveTargetFoodCostPct;
+            elements.recipeTargetFoodCostInput.value = livePricingGoalValue ?? "";
         }
         if (elements.recipePricingTotalCost) {
             elements.recipePricingTotalCost.textContent = formatCurrency(metrics.totalRecipeCost);
@@ -540,7 +629,9 @@
         const metrics = getPricingMetrics(state, elements);
         return {
             selling_price: Number((state?.sellingPrice ?? elements?.recipeSellingPriceInput?.value ?? "") || 0),
-            target_food_cost_pct: Number((state?.targetFoodCostPct ?? elements?.recipeTargetFoodCostInput?.value ?? "") || 0),
+            pricing_goal_type: metrics.pricingGoalType,
+            pricing_goal_value: metrics.pricingGoalValue === null ? null : Number(metrics.pricingGoalValue),
+            target_food_cost_pct: metrics.pricingGoalType === "food_cost_pct" ? Number(metrics.pricingGoalValue || 0) : 0,
             total_recipe_cost: Number(metrics.totalRecipeCost || 0),
             cost_per_portion: Number(metrics.costPerPortion || 0),
             gross_profit: metrics.grossProfit === null ? 0 : Number(metrics.grossProfit),
@@ -895,6 +986,9 @@
 
         state.activeRecipeId = selectedRecipe.recipe_id;
         const ingredients = Array.isArray(selectedRecipe.ingredients) ? selectedRecipe.ingredients : [];
+        const archivedGoalType = getValidPricingGoalType(selectedRecipe.pricing_goal_type || DEFAULT_PRICING_GOAL_TYPE);
+        const archivedGoalLabel = PRICING_GOAL_LABELS[archivedGoalType] || PRICING_GOAL_LABELS[DEFAULT_PRICING_GOAL_TYPE];
+        const archivedGoalValue = Number(selectedRecipe.pricing_goal_value || selectedRecipe.target_food_cost_pct || 0);
         elements.recipeLibraryDetail.innerHTML = `
             <div class="recipes-library-detail-card">
                 <div class="panel-label">Archived Snapshot</div>
@@ -930,8 +1024,8 @@
                             <span>${formatOptionalPercent(selectedRecipe.food_cost_pct)}</span>
                         </div>
                         <div class="recipes-library-detail-row">
-                            <strong>Target Food Cost %</strong>
-                            <span>${formatOptionalPercent(selectedRecipe.target_food_cost_pct)}</span>
+                            <strong>${escapeHtml(archivedGoalLabel)}</strong>
+                            <span>${formatOptionalPercent(archivedGoalValue)}</span>
                         </div>
                         <div class="recipes-library-detail-row">
                             <strong>Suggested Selling Price</strong>
@@ -1058,6 +1152,8 @@
         state.draft = createEmptyRecipe();
         state.calculation = null;
         state.sellingPrice = "";
+        state.pricingGoalType = DEFAULT_PRICING_GOAL_TYPE;
+        state.pricingGoalValue = "";
         state.targetFoodCostPct = "";
         renderRecipeCollections(elements, state);
         renderEditor(elements, state);
@@ -1108,6 +1204,8 @@
         renderPricingPanel(elements, {
             calculation,
             sellingPrice: elements.recipeSellingPriceInput?.value ?? "",
+            pricingGoalType: elements.recipePricingGoalTypeSelect?.value ?? DEFAULT_PRICING_GOAL_TYPE,
+            pricingGoalValue: elements.recipeTargetFoodCostInput?.value ?? "",
             targetFoodCostPct: elements.recipeTargetFoodCostInput?.value ?? ""
         });
     }
@@ -1154,6 +1252,8 @@
             yield_portions: Number(state.draft.yield_portions || 0),
             pricing_mode: state.draft.pricing_mode || DEFAULT_PRICING_MODE,
             selling_price: pricingSnapshot.selling_price,
+            pricing_goal_type: pricingSnapshot.pricing_goal_type,
+            pricing_goal_value: pricingSnapshot.pricing_goal_value,
             target_food_cost_pct: pricingSnapshot.target_food_cost_pct,
             total_recipe_cost: pricingSnapshot.total_recipe_cost,
             cost_per_portion: pricingSnapshot.cost_per_portion,
@@ -1204,6 +1304,8 @@
             state.draft = createEmptyRecipe();
             state.calculation = null;
             state.sellingPrice = "";
+            state.pricingGoalType = DEFAULT_PRICING_GOAL_TYPE;
+            state.pricingGoalValue = "";
             state.targetFoodCostPct = "";
             state.scopeSummary = data.scope_summary || null;
             state.isLoaded = true;
@@ -1297,6 +1399,8 @@
         state.draft = createEmptyRecipe();
         state.calculation = null;
         state.sellingPrice = "";
+        state.pricingGoalType = DEFAULT_PRICING_GOAL_TYPE;
+        state.pricingGoalValue = "";
         state.targetFoodCostPct = "";
         renderRecipeCollections(elements, state);
         renderEditor(elements, state);
@@ -1337,6 +1441,8 @@
             state.draft = createEmptyRecipe();
             state.calculation = null;
             state.sellingPrice = "";
+            state.pricingGoalType = DEFAULT_PRICING_GOAL_TYPE;
+            state.pricingGoalValue = "";
             state.targetFoodCostPct = "";
             renderRecipeCollections(elements, state);
             renderEditor(elements, state);
@@ -1419,9 +1525,18 @@
             });
         }
 
+        if (elements.recipePricingGoalTypeSelect && elements.recipePricingGoalTypeSelect.dataset.bound !== "true") {
+            elements.recipePricingGoalTypeSelect.dataset.bound = "true";
+            elements.recipePricingGoalTypeSelect.addEventListener("change", (event) => {
+                state.pricingGoalType = getValidPricingGoalType(event.target.value);
+                renderPricingPanel(elements, state);
+            });
+        }
+
         if (elements.recipeTargetFoodCostInput && elements.recipeTargetFoodCostInput.dataset.bound !== "true") {
             elements.recipeTargetFoodCostInput.dataset.bound = "true";
             elements.recipeTargetFoodCostInput.addEventListener("input", (event) => {
+                state.pricingGoalValue = event.target.value;
                 state.targetFoodCostPct = event.target.value;
                 renderPricingPanel(elements, state);
             });

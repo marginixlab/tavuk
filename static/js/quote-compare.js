@@ -925,12 +925,15 @@
             historyDetailModalSeries: state.historyDetailModalSeries,
             savedComparisons: state.savedComparisons,
             collapsedDecisionCards: state.collapsedDecisionCards,
+            selectedAnalysisRowKey: state.selectedAnalysisRowKey,
             analysisTableFilter: state.analysisTableFilter,
             analysisTableSearch: state.analysisTableSearch,
             activeAnalyzeTab: state.activeAnalyzeTab,
             showOpportunitySection: state.showOpportunitySection,
             showFullComparison: state.showFullComparison,
             showOptimizedSummary: state.showOptimizedSummary,
+            fullComparisonTableScroll: state.fullComparisonTableScroll,
+            previousAnalyzeTab: state.previousAnalyzeTab,
             manualRows: state.manualRows,
             status: state.status
         };
@@ -943,6 +946,13 @@
         } catch (error) {
             // Ignore storage failures.
         }
+    }
+
+    function scheduleQuoteCompareSessionPersist(state, elements) {
+        window.clearTimeout(state.persistSessionTimer);
+        state.persistSessionTimer = window.setTimeout(() => {
+            persistQuoteCompareSession(state, elements);
+        }, 180);
     }
 
     function clearPersistedQuoteCompareState() {
@@ -1004,15 +1014,18 @@
         state.historyDetailModalSeries = snapshot.historyDetailModalSeries || state.historyDetailModalSeries;
         state.savedComparisons = Array.isArray(snapshot.savedComparisons) ? snapshot.savedComparisons : state.savedComparisons;
         state.collapsedDecisionCards = snapshot.collapsedDecisionCards || state.collapsedDecisionCards;
+        state.selectedAnalysisRowKey = snapshot.selectedAnalysisRowKey || state.selectedAnalysisRowKey;
         state.analysisTableFilter = snapshot.analysisTableFilter || state.analysisTableFilter;
         state.analysisTableSearch = snapshot.analysisTableSearch || state.analysisTableSearch;
         state.activeAnalyzeTab = snapshot.activeAnalyzeTab || state.activeAnalyzeTab;
         state.showOpportunitySection = snapshot.showOpportunitySection !== false;
         state.showFullComparison = Boolean(snapshot.showFullComparison);
         state.showOptimizedSummary = Boolean(snapshot.showOptimizedSummary);
+        state.fullComparisonTableScroll = snapshot.fullComparisonTableScroll || state.fullComparisonTableScroll;
+        state.previousAnalyzeTab = snapshot.previousAnalyzeTab || state.previousAnalyzeTab;
         state.manualRows = Array.isArray(snapshot.manualRows) && snapshot.manualRows.length ? snapshot.manualRows : state.manualRows;
         state.status = snapshot.status || state.status;
-        state.qcHistoryData = buildHistoryDataset(state);
+        state.qcHistoryData = [];
     }
 
     function restoreQuoteCompareSession(state) {
@@ -1232,12 +1245,15 @@
             qcHistoryData: [],
             hasLoadedSavedComparisons: false,
             collapsedDecisionCards: {},
+            selectedAnalysisRowKey: "",
             analysisTableFilter: "all",
             analysisTableSearch: "",
             activeAnalyzeTab: "savings",
             showOpportunitySection: true,
             showFullComparison: false,
             showOptimizedSummary: false,
+            fullComparisonTableScroll: { top: 0, left: 0 },
+            previousAnalyzeTab: "savings",
             historyColumnVisibility: getDefaultHistoryColumnKeys(),
             historyColumnOrder: getDefaultHistoryColumnKeys(),
             historySort: getDefaultHistorySort(),
@@ -1257,7 +1273,8 @@
                 supplier: "",
                 dateFrom: "",
                 dateTo: ""
-            }
+            },
+            persistSessionTimer: null
         };
     }
 
@@ -2553,6 +2570,43 @@
         );
     }
 
+    function getFullComparisonTableScroller(elements) {
+        return elements.app?.querySelector(".qc2-analysis-table-scroll") || null;
+    }
+
+    function rememberFullComparisonTablePosition(elements, state) {
+        const tableScroller = getFullComparisonTableScroller(elements);
+        if (!tableScroller) return;
+        state.fullComparisonTableScroll = {
+            top: Number(tableScroller.scrollTop || 0),
+            left: Number(tableScroller.scrollLeft || 0)
+        };
+    }
+
+    function restoreFullComparisonTablePosition(elements, state) {
+        const tableScroller = getFullComparisonTableScroller(elements);
+        if (!tableScroller || state.currentScreen !== "analyze") return;
+        const savedPosition = state.fullComparisonTableScroll || {};
+        tableScroller.scrollTop = Number(savedPosition.top || 0);
+        tableScroller.scrollLeft = Number(savedPosition.left || 0);
+    }
+
+    function setFullComparisonTableActiveState(elements, isActive) {
+        elements.app?.querySelector(".qc2-analysis-table-frame")?.classList.toggle("is-active", Boolean(isActive));
+    }
+
+    function selectFullComparisonRow(elements, state, cardKey, { persist = true } = {}) {
+        const nextCardKey = String(cardKey || "").trim();
+        if (!nextCardKey) return;
+        state.selectedAnalysisRowKey = nextCardKey;
+        elements.app?.querySelectorAll("[data-qc-analysis-card-key]").forEach((row) => {
+            row.classList.toggle("is-selected", row.dataset.qcAnalysisCardKey === nextCardKey);
+        });
+        if (persist) {
+            scheduleQuoteCompareSessionPersist(state, elements);
+        }
+    }
+
     function cssEscape(value) {
         if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
             return CSS.escape(String(value || ""));
@@ -2827,10 +2881,12 @@
                         card.currentOffer?.supplier_name,
                         card.bestOffer?.supplier_name
                     ].filter(Boolean).join(" ").toLowerCase();
+                    const isNoUnitAdvantage = resultValue === "no-unit-advantage";
                     return `
                     <article
-                        class="qc2-analysis-row ${isExpanded ? "is-expanded" : ""}"
+                        class="qc2-analysis-row ${isExpanded ? "is-expanded" : ""} ${state.selectedAnalysisRowKey === cardKey ? "is-selected" : ""}"
                         data-qc-analysis-row
+                        data-qc-analysis-card-key="${escapeHtml(cardKey)}"
                         data-result="${escapeHtml(resultValue)}"
                         data-row-index="${rowIndex}"
                         data-search-text="${escapeHtml(searchText)}"
@@ -2840,34 +2896,39 @@
                         data-product-unit="${escapeHtml(card.unit || "")}"
                     >
                         <div class="qc2-analysis-row-main">
-                            <div class="qc2-analysis-cell">
+                            <div class="qc2-analysis-cell qc2-analysis-cell-product">
                                 <div class="qc2-analysis-product">${escapeHtml(card.productName)}</div>
                                 <div class="qc2-analysis-sub">${escapeHtml(card.unit || "Unit not provided")} | Qty ${escapeHtml(String(card.quantity || 0))}</div>
                             </div>
-                            <div class="qc2-analysis-cell">
-                                <div class="qc2-analysis-value">${escapeHtml(card.currentOffer?.supplier_name || "Supplier missing")}</div>
+                            <div class="qc2-analysis-cell qc2-analysis-cell-supplier">
+                                <div class="qc2-analysis-value qc2-analysis-supplier">${escapeHtml(card.currentOffer?.supplier_name || "Supplier missing")}</div>
                                 <div class="qc2-analysis-sub">${escapeHtml(formatDate(card.quoteDate))}</div>
                             </div>
-                            <div class="qc2-analysis-cell">
-                                <div class="qc2-analysis-value">${escapeHtml(formatCurrency(card.currentOffer?.total_price || 0, card.currency))}</div>
+                            <div class="qc2-analysis-cell qc2-analysis-cell-price">
+                                <div class="qc2-analysis-value qc2-analysis-price">${escapeHtml(formatCurrency(card.currentOffer?.total_price || 0, card.currency))}</div>
                                 <div class="qc2-analysis-sub">${escapeHtml(formatCurrency(card.currentOffer?.unit_price || 0, card.currency))} unit</div>
                             </div>
-                            <div class="qc2-analysis-cell">
-                                <div class="qc2-analysis-value">${escapeHtml(card.bestOffer?.supplier_name || "Supplier missing")}</div>
+                            <div class="qc2-analysis-cell qc2-analysis-cell-supplier">
+                                <div class="qc2-analysis-value qc2-analysis-supplier">${escapeHtml(card.bestOffer?.supplier_name || "Supplier missing")}</div>
                                 <div class="qc2-analysis-sub">${escapeHtml(card.bestOffer?.payment_term || "Best price reference")}</div>
                             </div>
-                            <div class="qc2-analysis-cell">
-                                <div class="qc2-analysis-value">${escapeHtml(formatCurrency(card.bestOffer?.total_price || 0, card.currency))}</div>
+                            <div class="qc2-analysis-cell qc2-analysis-cell-price">
+                                <div class="qc2-analysis-value qc2-analysis-price">${escapeHtml(formatCurrency(card.bestOffer?.total_price || 0, card.currency))}</div>
                                 <div class="qc2-analysis-sub">${escapeHtml(formatCurrency(card.bestOffer?.unit_price || 0, card.currency))} unit</div>
                             </div>
-                            <div class="qc2-analysis-cell">
-                                <div class="qc2-analysis-savings ${!card.hasValidAlternative ? "is-neutral" : ""}">${card.hasValidAlternative ? escapeHtml(formatCurrency(card.savingsAmount, card.currency)) : card.statusLabel}</div>
-                                <div class="qc2-analysis-sub">${card.hasValidAlternative ? escapeHtml(formatPercent(card.savingsPercent)) : escapeHtml(card.sameSupplierPriceVariation ? "Historical quote difference" : "No valid supplier switch")}</div>
+                            <div class="qc2-analysis-cell qc2-analysis-cell-savings">
+                                ${isNoUnitAdvantage ? `
+                                    <div class="qc2-analysis-neutral-value">--</div>
+                                ` : `
+                                    <div class="qc2-analysis-savings ${!card.hasValidAlternative ? "is-neutral" : ""}">${card.hasValidAlternative ? escapeHtml(formatCurrency(card.savingsAmount, card.currency)) : "--"}</div>
+                                    <div class="qc2-analysis-sub">${card.hasValidAlternative ? escapeHtml(formatPercent(card.savingsPercent)) : escapeHtml(card.statusTone === "best" ? "Current supplier already leads" : "No lower unit price")}</div>
+                                `}
                             </div>
-                            <div class="qc2-analysis-cell">
+                            <div class="qc2-analysis-cell qc2-analysis-cell-result">
                                 <span class="qc2-analysis-result ${card.statusTone === "best" ? "is-best" : card.statusTone === "neutral" ? "is-neutral" : "is-opportunity"}">${escapeHtml(card.statusLabel)}</span>
+                                ${isNoUnitAdvantage ? '<div class="qc2-analysis-result-helper">No better supplier found</div>' : ""}
                             </div>
-                            <div class="qc2-analysis-cell qc2-analysis-cell-expand">
+                            <div class="qc2-analysis-cell qc2-analysis-cell-expand ${card.hasValidAlternative && card.savingsAmount > 0 ? "" : "single-action"}">
                                 ${card.hasValidAlternative && card.savingsAmount > 0 ? `
                                     <button
                                         type="button"
@@ -2878,10 +2939,14 @@
                                     >
                                         See offers
                                     </button>
-                                ` : ""}
-                                <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
-                                    ${isExpanded ? "Close table" : "Open table"}
-                                </button>
+                                    <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
+                                        ${isExpanded ? "Close table" : "Open table"}
+                                    </button>
+                                ` : `
+                                    <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
+                                        ${isExpanded ? "Close table" : "Open table"}
+                                    </button>
+                                `}
                             </div>
                         </div>
                         <div class="qc2-analysis-row-detail">
@@ -3000,6 +3065,7 @@
         const comparisonCurrency = result.comparison?.bids?.[0]?.currency || "USD";
         const isOpportunitySectionVisible = state.showOpportunitySection !== false;
         const activeAnalyzeTab = state.activeAnalyzeTab || "savings";
+        const shouldRenderFullComparison = state.showFullComparison && activeAnalyzeTab === "full-table";
         return `
             <section class="qc2-screen qc2-screen-analyze" id="qc2AnalysisTop">
                 <div class="qc2-card qc2-analyze-card">
@@ -3060,16 +3126,16 @@
                                         <div class="mapping-section-copy">Structured all-products savings view across the complete quote set.</div>
                                     </div>
                                     <div class="qc2-analysis-section-actions">
-                                        ${state.showFullComparison ? '<button type="button" class="secondary-btn qc2-section-action-btn" data-qc-action="hide-all-details">Hide selections</button>' : ""}
+                                        ${shouldRenderFullComparison ? '<button type="button" class="secondary-btn qc2-section-action-btn" data-qc-action="hide-all-details">Hide selections</button>' : ""}
                                         <button type="button" class="secondary-btn qc2-section-action-btn" data-qc-action="toggle-full-comparison" aria-expanded="${state.showFullComparison ? "true" : "false"}">
                                             ${state.showFullComparison ? "Hide table" : "Open table"}
                                         </button>
                                     </div>
                                 </div>
-                                ${state.showFullComparison ? `
+                                ${shouldRenderFullComparison ? `
                                     ${renderAnalysisFilterBar(state, summary.decisionCards)}
                                     <div class="qc2-analysis-table-frame">
-                                        <div class="qc2-analysis-table-scroll">
+                                        <div class="qc2-analysis-table-scroll" tabindex="0" aria-label="Full comparison table results">
                                             ${renderAnalyzeRows(summary.decisionCards, state)}
                                         </div>
                                     </div>
@@ -3780,6 +3846,89 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
     function bindEvents(elements, state) {
         if (!elements.app || elements.app.dataset.bound === "true") return;
         elements.app.dataset.bound = "true";
+        const analysisTableDrag = {
+            scroller: null,
+            pointerId: null,
+            startX: 0,
+            startY: 0,
+            startScrollLeft: 0,
+            didDrag: false,
+            isDragging: false,
+            suppressClick: false
+        };
+
+        function resetAnalysisTableDrag() {
+            if (analysisTableDrag.scroller) {
+                analysisTableDrag.scroller.classList.remove("is-dragging");
+            }
+            analysisTableDrag.scroller = null;
+            analysisTableDrag.pointerId = null;
+            analysisTableDrag.startX = 0;
+            analysisTableDrag.startY = 0;
+            analysisTableDrag.startScrollLeft = 0;
+            analysisTableDrag.didDrag = false;
+            analysisTableDrag.isDragging = false;
+        }
+
+        function canStartAnalysisTableDrag(event) {
+            if (event.button !== 0 || event.pointerType === "touch") return false;
+            const tableScroller = event.target.closest(".qc2-analysis-table-scroll");
+            if (!tableScroller) return false;
+            if (event.target.closest("button, input, textarea, select, a, [contenteditable='true']")) return false;
+            return tableScroller.scrollWidth > tableScroller.clientWidth + 2;
+        }
+
+        elements.app.addEventListener("click", (event) => {
+            if (!analysisTableDrag.suppressClick || !event.target.closest(".qc2-analysis-table-scroll")) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            analysisTableDrag.suppressClick = false;
+        }, true);
+
+        elements.app.addEventListener("pointerdown", (event) => {
+            analysisTableDrag.suppressClick = false;
+            if (!canStartAnalysisTableDrag(event)) return;
+            const tableScroller = event.target.closest(".qc2-analysis-table-scroll");
+            if (!tableScroller) return;
+            analysisTableDrag.scroller = tableScroller;
+            analysisTableDrag.pointerId = event.pointerId;
+            analysisTableDrag.startX = event.clientX;
+            analysisTableDrag.startY = event.clientY;
+            analysisTableDrag.startScrollLeft = tableScroller.scrollLeft;
+            analysisTableDrag.didDrag = false;
+            analysisTableDrag.isDragging = false;
+        });
+
+        elements.app.addEventListener("pointermove", (event) => {
+            if (!analysisTableDrag.scroller || analysisTableDrag.pointerId !== event.pointerId) return;
+            const deltaX = event.clientX - analysisTableDrag.startX;
+            const deltaY = event.clientY - analysisTableDrag.startY;
+            if (!analysisTableDrag.isDragging) {
+                if (Math.abs(deltaX) < 6 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+                analysisTableDrag.isDragging = true;
+                analysisTableDrag.didDrag = true;
+                analysisTableDrag.scroller.classList.add("is-dragging");
+                if (!analysisTableDrag.scroller.hasPointerCapture(event.pointerId)) {
+                    analysisTableDrag.scroller.setPointerCapture(event.pointerId);
+                }
+            }
+            event.preventDefault();
+            analysisTableDrag.scroller.scrollLeft = analysisTableDrag.startScrollLeft - deltaX;
+        });
+
+        elements.app.addEventListener("pointerup", (event) => {
+            if (!analysisTableDrag.scroller || analysisTableDrag.pointerId !== event.pointerId) return;
+            if (analysisTableDrag.scroller.hasPointerCapture(event.pointerId)) {
+                analysisTableDrag.scroller.releasePointerCapture(event.pointerId);
+            }
+            analysisTableDrag.suppressClick = analysisTableDrag.didDrag;
+            resetAnalysisTableDrag();
+        });
+
+        elements.app.addEventListener("pointercancel", (event) => {
+            if (!analysisTableDrag.scroller || analysisTableDrag.pointerId !== event.pointerId) return;
+            resetAnalysisTableDrag();
+        });
 
         elements.app.addEventListener("click", async (event) => {
             const actionTarget = event.target.closest("[data-qc-action]");
@@ -3896,9 +4045,23 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                         toggleSpotlightCardInPlace(elements, state, cardKey);
                         return;
                     }
+                    const shouldRestoreAnalysisPosition = cardScope === "analysis";
+                    if (shouldRestoreAnalysisPosition) {
+                        rememberFullComparisonTablePosition(elements, state);
+                    }
                     state.collapsedDecisionCards = toggleDecisionCardState(state.collapsedDecisionCards, cardKey);
-                    const anchorSelector = `[data-qc-card-key="${cssEscape(cardKey)}"], [data-card-key="${cssEscape(cardKey)}"]`;
+                    if (cardScope === "analysis") {
+                        selectFullComparisonRow(elements, state, cardKey, { persist: false });
+                    }
+                    const anchorSelector = cardScope === "analysis"
+                        ? `[data-qc-analysis-card-key="${cssEscape(cardKey)}"]`
+                        : `[data-qc-card-key="${cssEscape(cardKey)}"], [data-card-key="${cssEscape(cardKey)}"]`;
                     renderApp(elements, state, { preserveScroll: true, anchorSelector });
+                    if (shouldRestoreAnalysisPosition) {
+                        requestAnimationFrame(() => {
+                            restoreFullComparisonTablePosition(elements, state);
+                        });
+                    }
                 }
                 return;
             }
@@ -3950,6 +4113,8 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 return;
             }
             if (action === "go-history") {
+                rememberFullComparisonTablePosition(elements, state);
+                state.previousAnalyzeTab = state.activeAnalyzeTab || "savings";
                 initializeHistoryFilters(state);
                 setStatus(state, "Loading saved product history.", "info");
                 await ensureHistoryComparisonsLoaded(state);
@@ -3963,6 +4128,13 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             if (action === "see-history-offers") {
                 const productName = actionTarget.dataset.productName || "";
                 const productUnit = actionTarget.dataset.productUnit || "";
+                selectFullComparisonRow(
+                    elements,
+                    state,
+                    actionTarget.closest("[data-qc-analysis-row]")?.dataset.qcAnalysisCardKey || state.selectedAnalysisRowKey
+                );
+                rememberFullComparisonTablePosition(elements, state);
+                state.previousAnalyzeTab = state.activeAnalyzeTab || "full-table";
                 initializeHistoryFilters(state);
                 setStatus(state, `Opening offer history for ${productName}.`, "info");
                 await ensureHistoryComparisonsLoaded(state);
@@ -3976,11 +4148,25 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             }
             if (action === "back-analyze") {
                 state.currentScreen = "analyze";
-                renderApp(elements, state);
+                state.activeAnalyzeTab = state.previousAnalyzeTab || state.activeAnalyzeTab || "savings";
+                const anchorSelector = state.activeAnalyzeTab === "full-table"
+                    ? '[data-qc-anchor="full-comparison-section"]'
+                    : '[data-qc-anchor="opportunity-section"]';
+                renderApp(elements, state, { preserveScroll: true, anchorSelector });
+                requestAnimationFrame(() => {
+                    restoreFullComparisonTablePosition(elements, state);
+                });
+                return;
             }
         });
 
         elements.app.addEventListener("click", (event) => {
+            setFullComparisonTableActiveState(elements, Boolean(event.target.closest(".qc2-analysis-table-frame")));
+            const selectedAnalysisRow = event.target.closest("[data-qc-analysis-card-key]");
+            if (selectedAnalysisRow) {
+                selectFullComparisonRow(elements, state, selectedAnalysisRow.dataset.qcAnalysisCardKey || "");
+            }
+
             const historyDateClear = event.target.closest("[data-qc-history-date-clear]");
             if (historyDateClear) {
                 const key = historyDateClear.dataset.qcHistoryDateClear;
@@ -4402,10 +4588,27 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
         const scrollContext = getScrollContext(elements);
         const scrollTarget = scrollContext.type === "element" ? scrollContext.target : window;
         scrollTarget.addEventListener("scroll", () => {
-            persistQuoteCompareSession(state, elements);
+            scheduleQuoteCompareSessionPersist(state, elements);
         }, { passive: true });
         window.addEventListener("beforeunload", () => {
+            window.clearTimeout(state.persistSessionTimer);
             persistQuoteCompareSession(state, elements);
+        });
+
+        elements.app.addEventListener("focusin", (event) => {
+            setFullComparisonTableActiveState(elements, Boolean(event.target.closest(".qc2-analysis-table-frame")));
+        });
+
+        elements.app.addEventListener("focusout", (event) => {
+            if (!event.relatedTarget || !event.relatedTarget.closest?.(".qc2-analysis-table-frame")) {
+                setFullComparisonTableActiveState(elements, false);
+            }
+        });
+
+        document.addEventListener("mousedown", (event) => {
+            if (!event.target.closest(".qc2-analysis-table-frame")) {
+                setFullComparisonTableActiveState(elements, false);
+            }
         });
     }
 

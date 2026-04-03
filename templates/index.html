@@ -926,11 +926,19 @@
                                         <input type="number" min="0" step="0.01" class="recipe-input" id="recipeSellingPriceInput" placeholder="0.00" inputmode="decimal">
                                     </label>
                                     <label class="recipe-field">
-                                        <span class="recipe-field-label">Target Food Cost %</span>
+                                        <span class="recipe-field-label">Pricing Goal Type</span>
+                                        <select class="recipe-select" id="recipePricingGoalTypeSelect">
+                                            <option value="food_cost_pct">Target Food Cost %</option>
+                                            <option value="gross_margin_pct">Target Gross Margin %</option>
+                                            <option value="markup_pct">Markup %</option>
+                                        </select>
+                                    </label>
+                                    <label class="recipe-field">
+                                        <span class="recipe-field-label" id="recipePricingGoalValueLabel">Goal Value (%)</span>
                                         <input type="number" min="0" step="0.01" class="recipe-input" id="recipeTargetFoodCostInput" placeholder="0.00" inputmode="decimal">
                                     </label>
                                 </div>
-                                <div class="recipe-pricing-helper">Target Food Cost % is commonly used to estimate a menu price from cost.</div>
+                                <div class="recipe-pricing-helper" id="recipePricingGoalHelper">Target Food Cost % estimates the menu price by keeping food cost at your chosen percentage.</div>
                                 <div class="recipe-pricing-metrics">
                                     <article class="recipe-pricing-metric">
                                         <div class="recipe-pricing-metric-label">Total Recipe Cost</div>
@@ -940,11 +948,11 @@
                                         <div class="recipe-pricing-metric-label">Cost Per Portion</div>
                                         <div class="recipe-pricing-metric-value" id="recipePricingCostPerPortion">$0.00</div>
                                     </article>
-                                    <article class="recipe-pricing-metric">
+                                    <article class="recipe-pricing-metric recipe-pricing-metric-highlight">
                                         <div class="recipe-pricing-metric-label">Gross Profit</div>
                                         <div class="recipe-pricing-metric-value" id="recipeGrossProfitValue">--</div>
                                     </article>
-                                    <article class="recipe-pricing-metric">
+                                    <article class="recipe-pricing-metric recipe-pricing-metric-highlight">
                                         <div class="recipe-pricing-metric-label">Gross Margin %</div>
                                         <div class="recipe-pricing-metric-value" id="recipeGrossMarginValue">--</div>
                                     </article>
@@ -952,7 +960,7 @@
                                         <div class="recipe-pricing-metric-label">Food Cost %</div>
                                         <div class="recipe-pricing-metric-value" id="recipeFoodCostValue">--</div>
                                     </article>
-                                    <article class="recipe-pricing-metric">
+                                    <article class="recipe-pricing-metric recipe-pricing-metric-highlight recipe-pricing-metric-suggested">
                                         <div class="recipe-pricing-metric-label">Suggested Selling Price</div>
                                         <div class="recipe-pricing-metric-value" id="recipeSuggestedPriceValue">--</div>
                                     </article>
