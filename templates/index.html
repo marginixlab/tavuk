@@ -55,6 +55,7 @@
                 <p class="brand-title">Premium pricing review for procurement teams</p>
             </div>
             <div class="header-actions">
+                <a id="guideLinkButton" class="secondary-btn workspace-toggle-btn" href="/guide">Guide</a>
                 <button id="notesPanelToggle" class="secondary-btn workspace-toggle-btn" type="button" hidden>Notes</button>
                 <button id="logoutButton" class="secondary-btn" type="button" hidden>Log Out</button>
             </div>
@@ -62,7 +63,6 @@
 
         <nav class="app-view-nav" aria-label="Primary workspace">
             <a class="app-view-tab {% if active_view == 'quote_compare' %}is-active{% endif %}" href="/" aria-current="{% if active_view == 'quote_compare' %}page{% else %}false{% endif %}">Quote Compare</a>
-            <a class="app-view-tab {% if active_view == 'guide' %}is-active{% endif %}" href="/guide" aria-current="{% if active_view == 'guide' %}page{% else %}false{% endif %}">Guide</a>
             <a class="app-view-tab {% if active_view == 'recipes' %}is-active{% endif %}" href="/recipes" aria-current="{% if active_view == 'recipes' %}page{% else %}false{% endif %}">Recipes</a>
         </nav>
 
@@ -70,17 +70,38 @@
             <div class="side-panel-card">
                 <div class="side-panel-head">
                     <div>
-                        <div class="side-panel-kicker">Workspace Notes</div>
-                        <h2 class="side-panel-title">Capture findings</h2>
+                        <div class="side-panel-kicker">Buyer Workspace</div>
+                        <h2 class="side-panel-title">Notes and follow-ups</h2>
                     </div>
                     <button type="button" class="side-panel-close" id="closeNotesPanelButton" aria-label="Close notes panel">Close</button>
                 </div>
                 <div class="side-panel-body">
-                    <label class="notes-label" for="notesTextarea">Notes</label>
-                    <textarea id="notesTextarea" class="notes-textarea" placeholder="Capture takeaways, supplier risks, renegotiation ideas, or savings actions..."></textarea>
+                    <div class="notes-workbench-copy">Keep quick buyer notes, supplier context, reminders, and negotiation follow-ups in one lightweight scratchpad.</div>
+                    <div class="notes-grid">
+                        <label class="notes-label notes-section-card" for="notesQuickInput">
+                            <span class="notes-section-title">Quick Notes</span>
+                            <span class="notes-section-copy">Fast takeaways from today’s review.</span>
+                            <textarea id="notesQuickInput" class="notes-textarea notes-textarea-compact" data-notes-field="quick_notes" placeholder="Capture immediate findings, cost flags, or next observations..."></textarea>
+                        </label>
+                        <label class="notes-label notes-section-card" for="notesSupplierInput">
+                            <span class="notes-section-title">Supplier Notes</span>
+                            <span class="notes-section-copy">Keep vendor-specific context close at hand.</span>
+                            <textarea id="notesSupplierInput" class="notes-textarea notes-textarea-compact" data-notes-field="supplier_notes" placeholder="MOQ concerns, service quality, payment flexibility, freight notes..."></textarea>
+                        </label>
+                        <label class="notes-label notes-section-card" for="notesFollowUpInput">
+                            <span class="notes-section-title">Follow-Up Items</span>
+                            <span class="notes-section-copy">Action reminders and review-next-order prompts.</span>
+                            <textarea id="notesFollowUpInput" class="notes-textarea notes-textarea-compact" data-notes-field="follow_up_items" placeholder="Review next order, confirm revised quote, request updated lead time..."></textarea>
+                        </label>
+                        <label class="notes-label notes-section-card" for="notesNegotiationInput">
+                            <span class="notes-section-title">Negotiation Reminders</span>
+                            <span class="notes-section-copy">Track leverage points before the next conversation.</span>
+                            <textarea id="notesNegotiationInput" class="notes-textarea notes-textarea-compact" data-notes-field="negotiation_reminders" placeholder="Anchor target, fallback supplier, delivery ask, payment ask..."></textarea>
+                        </label>
+                    </div>
                     <div class="notes-footer">
-                        <span class="notes-saved-indicator" id="notesSavedIndicator">Saved</span>
-                        <button type="button" class="secondary-btn notes-clear-btn" id="clearNotesButton">Clear</button>
+                        <span class="notes-saved-indicator" id="notesSavedIndicator">Ready</span>
+                        <button type="button" class="secondary-btn notes-clear-btn" id="clearNotesButton">Clear All</button>
                     </div>
                 </div>
             </div>
@@ -785,10 +806,17 @@
                     <h1 class="panel-title">Recipe Cost Calculator</h1>
                     <p class="panel-copy">Price recipes from your analyzed Etsy purchase data with a visible pricing mode, reusable saved recipes, and a private-advisor workflow built for fast decisions.</p>
                 </div>
-                <button type="button" class="secondary-btn recipes-library-open-btn" id="openRecipeLibraryButton">View Recipes</button>
+                <div class="workspace-hero-actions">
+                    <div class="shared-scope-card">
+                        <div class="shared-scope-label">Current File</div>
+                        <div class="shared-scope-summary" id="recipeDataScopeSummary">No analyzed file yet</div>
+                        <div class="shared-scope-note">Uploading a new file replaces the current data.</div>
+                        <button type="button" class="secondary-btn shared-scope-reset-btn" data-reset-workspace>Reset all data</button>
+                    </div>
+                </div>
             </section>
 
-            <section class="recipes-empty-shell" id="recipesNeedsAnalysis" {% if has_analysis %}hidden{% endif %}>
+            <section class="recipes-empty-shell" id="recipesNeedsAnalysis" {% if recipes_has_visible_content %}hidden{% endif %}>
                 <div class="recipes-empty-card">
                     <div class="panel-label">Pricing Data Needed</div>
                     <h2 class="panel-title">Analyze purchase data before pricing recipes</h2>
@@ -800,21 +828,22 @@
             </section>
 
             <section class="recipes-panel-view" id="recipesWorkspaceState" data-has-analysis="{{ 'true' if has_analysis else 'false' }}">
-            <section class="recipes-panel-view" id="recipesPanel" {% if not has_analysis %}hidden{% endif %}>
+            <section class="recipes-panel-view" id="recipesPanel" {% if not recipes_has_visible_content %}hidden{% endif %}>
                 <section class="recipes-shell" id="recipesShell">
                     <div class="recipes-layout">
                         <aside class="recipes-sidebar">
                             <div class="recipes-panel-head">
                                 <div>
-                                    <div class="panel-label">Saved Recipes</div>
-                                    <h2 class="panel-title">Recipe Cost Calculator</h2>
-                                    <p class="panel-copy">Quick access to your latest saved recipes.</p>
+                                    <div class="panel-label">Recipe Archive</div>
+                                    <h2 class="panel-title">Saved Snapshots</h2>
+                                    <p class="panel-copy">Browse saved recipe snapshots separately from the live builder.</p>
                                 </div>
                                 <button type="button" class="action-btn recipes-new-recipe-btn" id="newRecipeButton">New Recipe</button>
                             </div>
-                            <div class="recipes-list" id="recipesList"></div>
-                            <div class="recipes-empty" id="recipesEmpty">Save a recipe to build your own reusable cost library.</div>
-                            <button type="button" class="recipes-view-all-btn" id="openRecipeLibraryInlineButton">View all recipes →</button>
+                            <div class="recipes-archive-summary">
+                                <div class="recipes-empty">Saved recipes live in a dedicated archive view so the builder stays focused on creating a fresh calculation from the current uploaded file.</div>
+                                <button type="button" class="action-btn recipes-archive-open-btn" id="openRecipeLibraryInlineButton">View Saved Snapshots</button>
+                            </div>
                         </aside>
 
                         <div class="recipes-main">
@@ -865,10 +894,10 @@
                                 <div class="recipe-status" id="recipeStatusMessage" hidden></div>
                             </section>
 
-                            <section class="recipes-summary-grid">
-                                <article class="summary-card">
-                                    <div class="summary-card-title">Total Recipe Cost</div>
-                                    <div class="summary-card-value" id="recipeTotalCost">$0.00</div>
+                              <section class="recipes-summary-grid">
+                                  <article class="summary-card">
+                                      <div class="summary-card-title">Total Recipe Cost</div>
+                                      <div class="summary-card-value" id="recipeTotalCost">$0.00</div>
                                     <div class="summary-card-insight">The full cost of the current recipe using your selected pricing mode.</div>
                                 </article>
                                 <article class="summary-card">
@@ -879,14 +908,61 @@
                                 <article class="summary-card">
                                     <div class="summary-card-title">Main Cost Driver</div>
                                     <div class="summary-card-value compact" id="recipeMainCostDriver">No recipe yet</div>
-                                    <div class="summary-card-insight" id="recipeMainCostDriverCopy">The ingredient driving the largest share of recipe cost will appear here.</div>
-                                </article>
-                            </section>
+                                      <div class="summary-card-insight" id="recipeMainCostDriverCopy">The ingredient driving the largest share of recipe cost will appear here.</div>
+                                  </article>
+                              </section>
 
-                            <section class="recipe-breakdown-card">
+                            <section class="recipe-breakdown-card recipe-pricing-card">
                                 <div class="recipe-breakdown-head">
                                     <div class="recipe-breakdown-head-copy">
-                                        <div class="panel-label">Ingredient Breakdown</div>
+                                        <div class="panel-label">Profit &amp; Pricing</div>
+                                        <h3 class="recipe-breakdown-title">Turn recipe cost into a pricing decision</h3>
+                                    </div>
+                                    <div class="result-chip">Live</div>
+                                </div>
+                                <div class="recipe-pricing-form">
+                                    <label class="recipe-field">
+                                        <span class="recipe-field-label">Selling Price</span>
+                                        <input type="number" min="0" step="0.01" class="recipe-input" id="recipeSellingPriceInput" placeholder="0.00" inputmode="decimal">
+                                    </label>
+                                    <label class="recipe-field">
+                                        <span class="recipe-field-label">Target Food Cost %</span>
+                                        <input type="number" min="0" step="0.01" class="recipe-input" id="recipeTargetFoodCostInput" placeholder="0.00" inputmode="decimal">
+                                    </label>
+                                </div>
+                                <div class="recipe-pricing-helper">Target Food Cost % is commonly used to estimate a menu price from cost.</div>
+                                <div class="recipe-pricing-metrics">
+                                    <article class="recipe-pricing-metric">
+                                        <div class="recipe-pricing-metric-label">Total Recipe Cost</div>
+                                        <div class="recipe-pricing-metric-value" id="recipePricingTotalCost">$0.00</div>
+                                    </article>
+                                    <article class="recipe-pricing-metric">
+                                        <div class="recipe-pricing-metric-label">Cost Per Portion</div>
+                                        <div class="recipe-pricing-metric-value" id="recipePricingCostPerPortion">$0.00</div>
+                                    </article>
+                                    <article class="recipe-pricing-metric">
+                                        <div class="recipe-pricing-metric-label">Gross Profit</div>
+                                        <div class="recipe-pricing-metric-value" id="recipeGrossProfitValue">--</div>
+                                    </article>
+                                    <article class="recipe-pricing-metric">
+                                        <div class="recipe-pricing-metric-label">Gross Margin %</div>
+                                        <div class="recipe-pricing-metric-value" id="recipeGrossMarginValue">--</div>
+                                    </article>
+                                    <article class="recipe-pricing-metric">
+                                        <div class="recipe-pricing-metric-label">Food Cost %</div>
+                                        <div class="recipe-pricing-metric-value" id="recipeFoodCostValue">--</div>
+                                    </article>
+                                    <article class="recipe-pricing-metric">
+                                        <div class="recipe-pricing-metric-label">Suggested Selling Price</div>
+                                        <div class="recipe-pricing-metric-value" id="recipeSuggestedPriceValue">--</div>
+                                    </article>
+                                </div>
+                            </section>
+
+                              <section class="recipe-breakdown-card">
+                                  <div class="recipe-breakdown-head">
+                                      <div class="recipe-breakdown-head-copy">
+                                          <div class="panel-label">Ingredient Breakdown</div>
                                         <h3 class="recipe-breakdown-title">How the current recipe cost is built</h3>
                                     </div>
                                     <div class="result-chip" id="recipePricingModeChip">Choose a pricing mode</div>
@@ -903,12 +979,12 @@
                 <div class="recipes-library-panel" role="dialog" aria-modal="true" aria-labelledby="recipeLibraryTitle">
                     <div class="recipes-library-head">
                         <div>
-                            <div class="panel-label">Recipe Library</div>
-                            <h2 class="panel-title" id="recipeLibraryTitle">Recipe Library</h2>
-                            <p class="panel-copy recipes-library-subtitle">Manage, review and reuse your saved recipes.</p>
+                            <div class="panel-label">Recipe Archive</div>
+                            <h2 class="panel-title" id="recipeLibraryTitle">View All Recipes</h2>
+                            <p class="panel-copy recipes-library-subtitle">Review saved recipe snapshots without reopening them in the live builder.</p>
                         </div>
                         <div class="recipes-library-head-actions">
-                            <button type="button" class="action-btn" id="createRecipeFromLibraryButton">+ New Recipe</button>
+                            <button type="button" class="action-btn" id="createRecipeFromLibraryButton">Open Builder</button>
                             <button type="button" class="secondary-btn" id="closeRecipeLibraryButton">Close</button>
                         </div>
                     </div>
@@ -922,7 +998,10 @@
                             <option value="name_asc">Name A-Z</option>
                         </select>
                     </div>
-                    <div class="recipes-library-list" id="recipeLibraryList"></div>
+                    <div class="recipes-library-content">
+                        <div class="recipes-library-list" id="recipeLibraryList"></div>
+                        <aside class="recipes-library-detail" id="recipeLibraryDetail"></aside>
+                    </div>
                 </div>
             </section>
             </section>
@@ -932,10 +1011,20 @@
              {% if active_view == 'quote_compare' %}
         <section class="app-view app-view-quote-compare" id="quoteCompareWorkspaceView" data-qc-ready="false">
             <section class="quote-compare-hero">
-                <div>
-                    <div class="panel-label">Supplier Bid Evaluation</div>
-                    <h1 class="panel-title">Quote Compare</h1>
-                    <p class="panel-copy">Compare supplier offers quickly, surface the best price by product, and move toward a cleaner sourcing decision without spreadsheet overload.</p>
+                <div class="quote-compare-hero-top">
+                    <div class="quote-compare-hero-copy">
+                        <div class="panel-label">Supplier Bid Evaluation</div>
+                        <h1 class="panel-title">Quote Compare</h1>
+                        <p class="panel-copy">Compare supplier offers quickly, surface the best price by product, and move toward a cleaner sourcing decision without spreadsheet overload.</p>
+                    </div>
+                    <div class="quote-compare-hero-right">
+                        <div class="shared-scope-card">
+                            <div class="shared-scope-label">Current File</div>
+                            <div class="shared-scope-summary" id="quoteDataScopeSummary">No analyzed file yet</div>
+                            <div class="shared-scope-note">Uploading a new file replaces the current data.</div>
+                            <button type="button" class="secondary-btn shared-scope-reset-btn" data-reset-workspace>Reset all data</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="quote-demo-state" id="quoteDemoState" hidden>
                     <div class="quote-demo-banner">
@@ -1026,6 +1115,26 @@
         </section>
     </div>
 
+    <section class="workspace-reset-overlay" id="workspaceResetOverlay" hidden>
+        <div class="workspace-reset-modal" role="dialog" aria-modal="true" aria-labelledby="workspaceResetTitle" aria-describedby="workspaceResetDescription">
+            <div class="panel-label">Reset Workspace</div>
+            <h2 class="panel-title" id="workspaceResetTitle">Reset all your data?</h2>
+            <div class="panel-copy" id="workspaceResetDescription">
+                <p>This will permanently delete:</p>
+                <ul class="workspace-reset-list">
+                    <li>All uploaded files and current file data</li>
+                    <li>All current analyses</li>
+                    <li>All temporary working state</li>
+                </ul>
+                <p>Saved recipes remain available after reset. This action cannot be undone.</p>
+            </div>
+            <div class="workspace-reset-actions">
+                <button type="button" class="secondary-btn" id="workspaceResetCancelButton">Cancel</button>
+                <button type="button" class="danger-btn workspace-reset-confirm-btn" id="workspaceResetConfirmButton">Reset Data</button>
+            </div>
+        </div>
+    </section>
+
     <script>
         (function () {
             const HARD_RESET_FLAG_KEY = "app_hard_reset_intent";
@@ -1044,6 +1153,8 @@
                         "guidePanelOpen",
                         "notesPanelOpen",
                         "workspaceNotes",
+                        "workspaceNotesV2",
+                        "shared_analysis_scope_v1",
                         "priceAnalyzer.columnOrder.v1"
                     ],
                     sessionStorage: []
@@ -1206,6 +1317,7 @@
         })();
     </script>
     <script defer src="{{ url_for('static', path='/js/access-code.js') }}"></script>
+    <script defer src="{{ url_for('static', path='/js/workspace-reset.js') }}"></script>
     {% if active_view == 'guide' %}
     <script defer src="{{ url_for('static', path='/js/guide-assistant.js') }}"></script>
     {% endif %}

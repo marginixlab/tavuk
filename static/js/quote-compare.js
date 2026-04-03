@@ -104,13 +104,64 @@
         return {
             workspace: document.getElementById("quoteCompareWorkspaceView"),
             shell: document.getElementById("quoteCompareShell"),
-            app: document.getElementById("quoteCompareApp")
+            app: document.getElementById("quoteCompareApp"),
+            quoteDataScopeSummary: document.getElementById("quoteDataScopeSummary")
         };
+    }
+
+    function createManualUploadId() {
+        if (window.crypto?.randomUUID) {
+            return window.crypto.randomUUID();
+        }
+        return `manual-${Date.now()}-${Math.round(Math.random() * 100000)}`;
     }
 
     function setQuoteCompareReady(elements, isReady) {
         if (!elements.workspace) return;
         elements.workspace.setAttribute("data-qc-ready", isReady ? "true" : "false");
+    }
+
+    async function refreshSharedScopeSummary(elements, state) {
+        if (!elements.quoteDataScopeSummary) {
+            return;
+        }
+        try {
+            const data = await fetchJson("/analysis/scope-bootstrap");
+            state.dataScopeSummary = data.scope_summary || null;
+            const summary = state.dataScopeSummary || {};
+            const rowCount = Number(summary.row_count || 0);
+            const productCount = Number(summary.product_count || 0);
+            const scopeLabel = summary.scope_label || "Current File";
+            elements.quoteDataScopeSummary.textContent = rowCount
+                ? `${scopeLabel} • ${productCount} products • ${rowCount} rows`
+                : `${scopeLabel} • No analyzed file yet`;
+        } catch (error) {
+            elements.quoteDataScopeSummary.textContent = "Current File";
+        }
+    }
+
+    function setSharedAnalysisAvailability(hasAnalysis) {
+        const value = hasAnalysis ? "true" : "false";
+        const mainDashboardView = document.getElementById("mainDashboardView");
+        const recipesWorkspaceState = document.getElementById("recipesWorkspaceState");
+        if (mainDashboardView) {
+            mainDashboardView.dataset.hasAnalysis = value;
+        }
+        if (recipesWorkspaceState) {
+            recipesWorkspaceState.dataset.hasAnalysis = value;
+        }
+    }
+
+    async function activateCurrentUploadScope(elements, state) {
+        state.dataScope = "current_upload";
+        setSharedAnalysisAvailability(true);
+        await refreshSharedScopeSummary(elements, state);
+        window.dispatchEvent(new CustomEvent("shared-analysis-context-updated", {
+            detail: {
+                scope: "current_upload",
+                uploadId: state.analysisResult?.comparison?.upload_id || state.activeSessionId || state.manualUploadId || ""
+            }
+        }));
     }
 
     function findScrollableParent(node) {
@@ -860,6 +911,7 @@
             detectedMappings: state.detectedMappings,
             selectedMappings: state.selectedMappings,
             activeSessionId: state.activeSessionId,
+            manualUploadId: state.manualUploadId,
             historyFilters: state.historyFilters,
             historyFocusedSeriesKey: state.historyFocusedSeriesKey,
             historyColumnVisibility: state.historyColumnVisibility,
@@ -913,6 +965,7 @@
         state.analysisResult = null;
         state.uploadReview = null;
         state.activeSessionId = "";
+        state.manualUploadId = createManualUploadId();
         state.parseError = "";
         state.isParsing = false;
         state.isSubmitting = false;
@@ -937,6 +990,7 @@
         state.detectedMappings = snapshot.detectedMappings || state.detectedMappings;
         state.selectedMappings = snapshot.selectedMappings || state.selectedMappings;
         state.activeSessionId = snapshot.activeSessionId || state.activeSessionId;
+        state.manualUploadId = snapshot.manualUploadId || state.manualUploadId;
         state.historyFilters = { ...state.historyFilters, ...(snapshot.historyFilters || {}) };
         state.historyFocusedSeriesKey = snapshot.historyFocusedSeriesKey || state.historyFocusedSeriesKey;
         state.historyColumnVisibility = normalizeHistoryColumnKeys(snapshot.historyColumnVisibility || state.historyColumnVisibility);
@@ -1165,6 +1219,8 @@
             analysisResult: null,
             uploadReview: null,
             activeSessionId: "",
+            manualUploadId: createManualUploadId(),
+            dataScopeSummary: null,
             parseError: "",
             status: { message: "", tone: "" },
             isParsing: false,
@@ -1410,6 +1466,7 @@
         }
 
         return {
+            upload_id: state.manualUploadId,
             name: `Manual Quote Compare ${new Date().toLocaleDateString("en-US")}`,
             sourcing_need: "",
             source_type: "manual",
@@ -1638,6 +1695,7 @@
                 return {
                     historyId: `${comparison.comparison_id || "comparison"}-${index}`,
                     comparisonId: comparison.comparison_id || "",
+                    uploadId: comparison.upload_id || "",
                     comparisonName: comparison.name || "Saved quotes",
                     productName,
                     supplier,
@@ -1647,6 +1705,10 @@
                     totalPrice: Number(bid.total_price || 0),
                     quoteDate,
                     currency: normalizeHistoryText(bid.currency || "USD") || "USD",
+                    deliveryTime: normalizeHistoryText(bid.delivery_time),
+                    paymentTerm: normalizeHistoryText(bid.payment_term),
+                    validUntil: normalizeHistoryText(bid.valid_until),
+                    notes: normalizeHistoryText(bid.notes),
                     sourceType: comparisonSourceType,
                     createdAt: comparisonCreatedAt,
                     effectiveDate,
@@ -2369,7 +2431,7 @@
         const duplicateNote = hasDuplicate ? "This uploaded column is already assigned elsewhere." : "";
         return `
             <div class="mapping-row ${isVisualError ? "is-missing" : ""}" data-field-name="${escapeHtml(row.fieldName)}">
-                <div class="mapping-field-label">
+                <div class="mapping-field-label mapping-row-info">
                     <div class="qc2-review-field-head">
                         <div class="mapping-field-title">${escapeHtml(row.fieldName)}</div>
                         ${!row.required ? '<span class="qc2-optional-badge">Optional</span>' : ""}
@@ -2379,13 +2441,15 @@
                     ${duplicateNote ? `<div class="qc2-inline-error">${escapeHtml(duplicateNote)}</div>` : ""}
                     ${row.required && !row.selectedColumn ? '<div class="qc2-inline-error">This required field still needs a unique column.</div>' : ""}
                 </div>
-                <div class="mapping-select-shell">
+                <div class="mapping-select-shell mapping-row-select">
                     <select class="mapping-select" data-qc-mapping-field="${escapeHtml(row.fieldName)}">
                         <option value="">Choose a column</option>
                         ${row.options.map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === row.selectedColumn ? "selected" : ""} ${option.disabled ? "disabled" : ""}>${escapeHtml(option.value)}${option.disabled ? " (Already used)" : ""}</option>`).join("")}
                     </select>
                 </div>
-                <span class="mapping-status ${statusClass}">${escapeHtml(statusText)}</span>
+                <div class="mapping-row-status">
+                    <span class="mapping-status ${statusClass}">${escapeHtml(statusText)}</span>
+                </div>
             </div>
         `;
     }
@@ -2834,7 +2898,16 @@
                                     <span class="qc2-analysis-detail-label">Best Offer</span>
                                     <span class="qc2-analysis-detail-value">${escapeHtml(card.bestOffer?.supplier_name || "Supplier missing")} | ${escapeHtml(formatCurrency(card.bestOffer?.unit_price || 0, card.currency))} unit</span>
                                 </div>
+                                <div class="qc2-analysis-detail-item">
+                                    <span class="qc2-analysis-detail-label">Commercial Terms</span>
+                                    <span class="qc2-analysis-detail-value">${escapeHtml(card.bestOffer?.currency || card.currency || "USD")} | ${escapeHtml(card.bestOffer?.delivery_time || "Delivery not provided")} | ${escapeHtml(card.bestOffer?.payment_term || "Payment terms not provided")}</span>
+                                </div>
+                                <div class="qc2-analysis-detail-item">
+                                    <span class="qc2-analysis-detail-label">Offer Validity</span>
+                                    <span class="qc2-analysis-detail-value">${escapeHtml(formatDate(card.bestOffer?.valid_until) || "Not provided")}</span>
+                                </div>
                             </div>
+                            ${(card.currentOffer?.notes || card.bestOffer?.notes) ? `<div class="qc2-analysis-detail-note qc2-analysis-detail-note-secondary">${escapeHtml(card.currentOffer?.notes || card.bestOffer?.notes)}</div>` : ""}
                             <div class="qc2-analysis-detail-note">${escapeHtml(card.decisionSentence)}</div>
                         </div>
                     </article>
@@ -2902,6 +2975,8 @@
                                     <div class="qc2-analysis-detail-item ${offer.supplier_name === row.selectedSupplier && Number(offer.total_price || 0) === Number(row.totalPrice || 0) ? "is-highlighted" : ""}">
                                         <span class="qc2-analysis-detail-label">${escapeHtml(offer.supplier_name || "Supplier missing")}</span>
                                         <span class="qc2-analysis-detail-value">${escapeHtml(formatCurrency(offer.total_price || 0, offer.currency || row.currency))} | ${escapeHtml(formatCurrency(offer.unit_price || 0, offer.currency || row.currency))} unit | ${escapeHtml(formatDate(offer.quote_date))}</span>
+                                        <span class="qc2-analysis-detail-value">${escapeHtml(offer.currency || row.currency || "USD")} | ${escapeHtml(offer.delivery_time || "Delivery not provided")} | ${escapeHtml(offer.payment_term || "Payment terms not provided")}</span>
+                                        ${(offer.valid_until || offer.notes) ? `<span class="qc2-analysis-detail-value">${escapeHtml(offer.valid_until ? formatDate(offer.valid_until) : "Validity not provided")}${offer.notes ? ` | ${escapeHtml(offer.notes)}` : ""}</span>` : ""}
                                     </div>
                                 `).join("")}
                             </div>
@@ -3006,9 +3081,6 @@
                     <div class="qc2-actions qc2-analyze-actions" id="qc2AnalysisLower">
                         <div class="qc2-analyze-actions-slot is-left">
                             <button type="button" class="secondary-btn" data-qc-action="back-review">Back to Review</button>
-                        </div>
-                        <div class="qc2-analyze-actions-slot is-center">
-                            <button type="button" class="secondary-btn" data-qc-action="save-quotes" ${state.isSaving ? "disabled" : ""}>${state.isSaving ? "Saving Quotes..." : "Save Quotes"}</button>
                         </div>
                         <div class="qc2-analyze-actions-slot is-right">
                             <button type="button" class="action-btn" data-qc-action="go-history">Product History</button>
@@ -3556,7 +3628,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
         });
     }
 
-    async function startUploadAnalysis(state) {
+    async function startUploadAnalysis(state, elements) {
         if (!state.file && !state.activeSessionId) {
             setStatus(state, "Choose a supplier file before starting analysis.", "error");
             return false;
@@ -3640,6 +3712,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             state.lastFlowScreen = "review";
             state.currentScreen = "analyze";
             state.isSubmitting = false;
+            await activateCurrentUploadScope(elements, state);
             setStatus(state, data.message || "Quote analysis is ready.", "success");
             return true;
         } catch (error) {
@@ -3656,7 +3729,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
         }
     }
 
-    async function startManualAnalysis(state) {
+    async function startManualAnalysis(state, elements) {
         try {
             const payload = buildManualPayload(state);
             setStatus(state, "Calculating quote analysis from the manual supplier rows.", "info");
@@ -3670,6 +3743,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 evaluation: data.evaluation,
                 summary: buildAnalyzeSummary({ comparison: { ...data.comparison, source_type: "manual" } })
             };
+            state.manualUploadId = data.comparison?.upload_id || state.manualUploadId;
             state.selectedMappings = {
                 "Product Name": "Manual Entry",
                 "Supplier": "Manual Entry",
@@ -3684,6 +3758,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             state.collapsedDecisionCards = clearDecisionCardsForScope(state.collapsedDecisionCards, "spotlight");
             state.lastFlowScreen = "manual";
             state.currentScreen = "analyze";
+            await activateCurrentUploadScope(elements, state);
             setStatus(state, "Manual quote analysis is ready.", "success");
             return true;
         } catch (error) {
@@ -3692,75 +3767,14 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
         }
     }
 
-    function buildSavePayload(state) {
-        const comparison = state.analysisResult?.comparison;
-        const summary = state.analysisResult?.summary || buildAnalyzeSummary(state.analysisResult || { comparison });
-        if (!comparison) {
-            throw new Error("Run quote analysis before saving quotes.");
-        }
-        const bids = state.analyzeMode === "optimize"
-            ? (summary.optimizedRows || []).map((row) => ({
-                supplier_name: row.selectedSupplier || "",
-                product_name: row.productName || "",
-                unit: row.unit || "",
-                quantity: Number(row.quantity || 0),
-                unit_price: Number(row.unitPrice || 0),
-                total_price: Number(row.totalPrice || 0),
-                quote_date: row.quoteDate || "",
-                currency: row.currency || "USD",
-                delivery_time: row.chosenOffer?.delivery_time || "",
-                payment_term: row.chosenOffer?.payment_term || "",
-                valid_until: row.chosenOffer?.valid_until || null,
-                notes: row.chosenOffer?.notes || null
-            }))
-            : (comparison.bids || []).map((bid) => ({
-                supplier_name: bid.supplier_name || "",
-                product_name: bid.product_name || "",
-                unit: bid.unit || "",
-                quantity: Number(bid.quantity || 0),
-                unit_price: Number(bid.unit_price || 0),
-                total_price: Number(bid.total_price || 0),
-                quote_date: bid.quote_date || bid.date || "",
-                currency: bid.currency || "USD",
-                delivery_time: bid.delivery_time || "",
-                payment_term: bid.payment_term || "",
-                valid_until: bid.valid_until || null,
-                notes: bid.notes || null
-            }));
-        return {
-            comparison_id: comparison.comparison_id || null,
-            name: comparison.name || (state.file ? state.file.name.replace(/\.[^.]+$/, "") : `Quote Compare ${new Date().toLocaleDateString("en-US")}`),
-            sourcing_need: comparison.sourcing_need || "",
-            source_type: comparison.source_type || (state.mode === "manual" ? "manual" : "upload"),
-            mode: state.analyzeMode === "optimize" ? "optimized" : "compare",
-            weighting: comparison.weighting || null,
-            bids
-        };
-    }
-
-    async function saveQuotes(state) {
-        const payload = buildSavePayload(state);
-        state.isSaving = true;
-        setStatus(state, "Saving quote records to product history.", "info");
-        try {
-            const data = await fetchJson("/quote-compare/save", {
-                method: "POST",
-                body: JSON.stringify(payload)
-            });
-            hydrateComparisons(state, data.comparisons || []);
-            state.analysisResult = {
-                comparison: data.comparison,
-                evaluation: data.evaluation,
-                summary: buildAnalyzeSummary({ comparison: data.comparison })
-            };
-            state.isSaving = false;
-            setStatus(state, data.message || "Quotes saved.", "success");
-            return true;
-        } catch (error) {
-            state.isSaving = false;
-            setStatus(state, error.message, "error");
-            return false;
-        }
+    function openUploadFlow(elements, state) {
+        resetQuoteCompareUploadState(state);
+        state.mode = "upload";
+        state.currentScreen = "upload";
+        state.lastFlowScreen = "review";
+        setStatus(state, "", "");
+        renderApp(elements, state);
+        writeScrollPosition(elements, 0);
     }
 
     function bindEvents(elements, state) {
@@ -3824,7 +3838,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 return;
             }
             if (action === "start-analysis") {
-                const started = await startUploadAnalysis(state);
+                const started = await startUploadAnalysis(state, elements);
                 renderApp(elements, state);
                 if (started) {
                     writeScrollPosition(elements, 0);
@@ -3870,12 +3884,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 return;
             }
             if (action === "manual-analyze") {
-                await startManualAnalysis(state);
-                renderApp(elements, state);
-                return;
-            }
-            if (action === "save-quotes") {
-                await saveQuotes(state);
+                await startManualAnalysis(state, elements);
                 renderApp(elements, state);
                 return;
             }
@@ -4285,11 +4294,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
     function exposeApi(elements, state) {
         window.resetQuoteCompareToStep1 = function resetQuoteCompareToStep1() {
             setQuoteCompareReady(elements, false);
-            resetQuoteCompareUploadState(state);
-            state.currentScreen = "start";
-            state.lastFlowScreen = "review";
-            renderApp(elements, state);
-            writeScrollPosition(elements, 0);
+            openUploadFlow(elements, state);
             setQuoteCompareReady(elements, true);
         };
 
@@ -4324,7 +4329,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 renderApp(elements, state);
             },
             continueManualReview() {
-                startManualAnalysis(state).then(() => renderApp(elements, state));
+                startManualAnalysis(state, elements).then(() => renderApp(elements, state));
             },
             goToStart() {
                 state.currentScreen = "start";
@@ -4341,15 +4346,26 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
         setQuoteCompareReady(elements, false);
         const state = createState();
         let hardResetRequested = false;
+        let hasBackendAnalysis = false;
         try {
+            try {
+                const scopePayload = await fetchJson("/analysis/scope-bootstrap?scope=current_upload");
+                hasBackendAnalysis = Boolean(scopePayload?.has_analysis);
+            } catch (error) {
+                hasBackendAnalysis = false;
+            }
             hardResetRequested = Boolean(window.PriceAnalyzerBootGuard?.didHardReset?.());
             if (hardResetRequested) {
+                resetQuoteCompareUploadState(state);
+            } else if (!hasBackendAnalysis) {
+                clearPersistedQuoteCompareState();
                 resetQuoteCompareUploadState(state);
             } else {
                 restoreQuoteCompareSession(state);
                 restoreHistoryUiPreferences(state);
             }
             bindEvents(elements, state);
+            await refreshSharedScopeSummary(elements, state);
             exposeApi(elements, state);
             await loadSavedComparisons(state, { includeComparisons: false });
             if (state.currentScreen === "history") {

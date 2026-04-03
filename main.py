@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import re
+import shutil
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -32,6 +33,7 @@ STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 INDEX_TEMPLATE = "index.html"
 LATEST_RESULTS_PATH = BASE_DIR / "latest_results.csv"
+ANALYSIS_HISTORY_PATH = BASE_DIR / "analysis_history.json"
 CODES_PATH = BASE_DIR / "codes.json"
 RECIPES_PATH = BASE_DIR / "recipes.json"
 QUOTE_COMPARISONS_PATH = BASE_DIR / "quote_comparisons.json"
@@ -43,6 +45,10 @@ LATEST_ANALYSIS_CACHE: dict[str, Any] = {
     "context": None
 }
 QUOTE_COMPARE_STORE_CACHE: dict[str, Any] = {
+    "signature": None,
+    "store": None
+}
+ANALYSIS_HISTORY_CACHE: dict[str, Any] = {
     "signature": None,
     "store": None
 }
@@ -226,6 +232,18 @@ QUOTE_COMPARE_DEFAULT_WEIGHTS = {
     "price": 0.5,
     "delivery": 0.25,
     "payment": 0.25
+}
+ANALYSIS_SCOPE_OPTIONS = [
+    {"value": "current_upload", "label": "Current File"}
+]
+ANALYSIS_DEDUPE_TEXT_COLUMNS = {
+    "Supplier": "supplier",
+    "Product Name": "product",
+    "Unit": "unit"
+}
+ANALYSIS_DEDUPE_NUMBER_COLUMNS = {
+    "Quantity": 6,
+    "Unit Price": 4
 }
 
 
@@ -1082,6 +1100,14 @@ class RecipePayload(BaseModel):
     yield_portions: float
     pricing_mode: str
     ingredients: list[RecipeIngredientPayload]
+    selling_price: float | None = None
+    target_food_cost_pct: float | None = None
+    total_recipe_cost: float | None = None
+    cost_per_portion: float | None = None
+    gross_profit: float | None = None
+    gross_margin_pct: float | None = None
+    food_cost_pct: float | None = None
+    suggested_selling_price: float | None = None
 
 
 class RecipeDeletePayload(BaseModel):
@@ -1105,6 +1131,7 @@ class QuoteBidPayload(BaseModel):
 
 class QuoteComparisonPayload(BaseModel):
     comparison_id: str | None = None
+    upload_id: str | None = None
     name: str
     sourcing_need: str | None = None
     bids: list[QuoteBidPayload]
@@ -1334,7 +1361,43 @@ def save_recipes_store(store: dict[str, Any]) -> None:
 def ensure_quote_comparisons_file() -> None:
     if QUOTE_COMPARISONS_PATH.exists():
         return
-    QUOTE_COMPARISONS_PATH.write_text(json.dumps({"comparisons": []}, indent=2), encoding="utf-8")
+    QUOTE_COMPARISONS_PATH.write_text(
+        json.dumps({"comparisons": [], "active_sessions": {}}, indent=2),
+        encoding="utf-8"
+    )
+
+
+def ensure_analysis_history_file() -> None:
+    if ANALYSIS_HISTORY_PATH.exists():
+        return
+    ANALYSIS_HISTORY_PATH.write_text(
+        json.dumps({"uploads": [], "rows": []}, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8"
+    )
+
+
+def reset_workspace_data_store() -> None:
+    for file_path in (LATEST_RESULTS_PATH, ANALYSIS_HISTORY_PATH):
+        try:
+            if file_path.exists():
+                file_path.unlink()
+        except FileNotFoundError:
+            continue
+
+    for directory in (QUOTE_COMPARE_SESSION_CACHE_DIR, QUOTE_COMPARE_UPLOAD_CACHE_DIR):
+        if directory.exists():
+            shutil.rmtree(directory, ignore_errors=True)
+        directory.mkdir(parents=True, exist_ok=True)
+
+    ensure_recipes_file()
+    ensure_analysis_history_file()
+
+    QUOTE_COMPARE_STORE_CACHE["signature"] = None
+    QUOTE_COMPARE_STORE_CACHE["store"] = None
+    ANALYSIS_HISTORY_CACHE["signature"] = None
+    ANALYSIS_HISTORY_CACHE["store"] = None
+    LATEST_ANALYSIS_CACHE["signature"] = None
+    LATEST_ANALYSIS_CACHE["context"] = None
 
 
 def load_quote_comparisons_store() -> dict[str, Any]:
@@ -1383,6 +1446,102 @@ def save_quote_comparisons_store(store: dict[str, Any]) -> None:
     QUOTE_COMPARE_STORE_CACHE["store"] = safe_store
 
 
+def load_analysis_history_store() -> dict[str, Any]:
+    ensure_analysis_history_file()
+    cache_signature = (
+        ANALYSIS_HISTORY_PATH.stat().st_mtime_ns,
+        ANALYSIS_HISTORY_PATH.stat().st_size
+    )
+    if (
+        ANALYSIS_HISTORY_CACHE["signature"] == cache_signature
+        and isinstance(ANALYSIS_HISTORY_CACHE["store"], dict)
+    ):
+        return ANALYSIS_HISTORY_CACHE["store"]
+
+    try:
+        store = json.loads(ANALYSIS_HISTORY_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid analysis history file: {ANALYSIS_HISTORY_PATH}") from exc
+
+    changed = False
+    if not isinstance(store.get("uploads"), list):
+        store["uploads"] = []
+        changed = True
+    if not isinstance(store.get("rows"), list):
+        store["rows"] = []
+        changed = True
+    if changed:
+        save_analysis_history_store(store)
+        return ANALYSIS_HISTORY_CACHE["store"]
+
+    ANALYSIS_HISTORY_CACHE["signature"] = cache_signature
+    ANALYSIS_HISTORY_CACHE["store"] = store
+    return store
+
+
+def save_analysis_history_store(store: dict[str, Any]) -> None:
+    safe_store = make_json_safe(store)
+    ANALYSIS_HISTORY_PATH.write_text(
+        json.dumps(safe_store, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8"
+    )
+    ANALYSIS_HISTORY_CACHE["signature"] = (
+        ANALYSIS_HISTORY_PATH.stat().st_mtime_ns,
+        ANALYSIS_HISTORY_PATH.stat().st_size
+    )
+    ANALYSIS_HISTORY_CACHE["store"] = safe_store
+
+
+def seed_analysis_history_from_latest_results() -> None:
+    if not LATEST_RESULTS_PATH.exists():
+        return
+
+    store = load_analysis_history_store()
+    if store.get("rows"):
+        return
+
+    try:
+        legacy_df = load_current_upload_analysis_frame()
+    except Exception:
+        logger.exception("Failed to seed analysis history from latest results")
+        return
+
+    if legacy_df.empty:
+        return
+
+    upload_id = f"legacy-{LATEST_RESULTS_PATH.stat().st_mtime_ns}"
+    if "upload_id" not in legacy_df.columns:
+        legacy_df["upload_id"] = upload_id
+    else:
+        legacy_df["upload_id"] = legacy_df["upload_id"].fillna("").astype(str).replace("", upload_id)
+    if "row_id" not in legacy_df.columns:
+        legacy_df["row_id"] = [
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"{upload_id}|legacy|{index}"))
+            for index in range(1, len(legacy_df.index) + 1)
+        ]
+    legacy_df = assign_analysis_row_ids(legacy_df, upload_id=upload_id)
+    save_current_upload_analysis_frame(legacy_df)
+    append_analysis_history_rows(
+        legacy_df,
+        upload_id=upload_id,
+        source_name="Latest imported analysis",
+        source_type="upload",
+        comparison_name="Latest imported analysis"
+    )
+
+
+def normalize_analysis_scope(scope: str | None) -> str:
+    return "current_upload"
+
+
+def build_analysis_scope_options() -> list[dict[str, str]]:
+    return [dict(option) for option in ANALYSIS_SCOPE_OPTIONS]
+
+
+def get_analysis_scope_label(scope: str | None) -> str:
+    return "Current File"
+
+
 def serialize_dataframe_records(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
     dataframe = dataframe.copy()
     for column in dataframe.columns:
@@ -1397,6 +1556,99 @@ def serialize_dataframe_records(dataframe: pd.DataFrame) -> list[dict[str, Any]]
             for key, value in row.items()
         })
     return records
+
+
+def build_analysis_dedupe_key_series(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty:
+        return pd.Series(dtype="string")
+
+    key_parts: list[pd.Series] = []
+    date_series = pd.to_datetime(frame.get("Date"), errors="coerce")
+    key_parts.append(date_series.dt.strftime("%Y-%m-%d").fillna(""))
+
+    for column in ANALYSIS_DEDUPE_TEXT_COLUMNS:
+        if column in frame.columns:
+            key_parts.append(frame[column].fillna("").astype(str).str.strip().str.lower())
+        else:
+            key_parts.append(pd.Series([""] * len(frame.index), index=frame.index, dtype="string"))
+
+    for column, decimals in ANALYSIS_DEDUPE_NUMBER_COLUMNS.items():
+        if column in frame.columns:
+            numeric_series = pd.to_numeric(frame[column], errors="coerce").round(decimals)
+            key_parts.append(numeric_series.map(lambda value: "" if pd.isna(value) else f"{float(value):.{decimals}f}"))
+        else:
+            key_parts.append(pd.Series([""] * len(frame.index), index=frame.index, dtype="string"))
+
+    return pd.Series(
+        [
+            "|".join(str(part.iloc[index]) for part in key_parts)
+            for index in range(len(frame.index))
+        ],
+        index=frame.index,
+        dtype="string"
+    )
+
+
+def deduplicate_analysis_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+
+    deduped_frame = frame.copy()
+    if "Date" in deduped_frame.columns:
+        deduped_frame["Date"] = pd.to_datetime(deduped_frame["Date"], errors="coerce")
+    if "Valid Until" in deduped_frame.columns:
+        deduped_frame["Valid Until"] = pd.to_datetime(deduped_frame["Valid Until"], errors="coerce")
+    for column in ["Quantity", "Unit Price", "Total Amount", "Average Price", "Overpay", "Savings Opportunity", "Overpay Pct"]:
+        if column in deduped_frame.columns:
+            deduped_frame[column] = pd.to_numeric(deduped_frame[column], errors="coerce")
+
+    deduped_frame["_analysis_dedupe_key"] = build_analysis_dedupe_key_series(deduped_frame)
+    deduped_frame = deduped_frame.drop_duplicates(subset=["_analysis_dedupe_key"], keep="last").copy()
+    deduped_frame = deduped_frame.drop(columns=["_analysis_dedupe_key"], errors="ignore")
+
+    sort_columns = [column for column in ["Date", "Product Name", "Supplier"] if column in deduped_frame.columns]
+    if sort_columns:
+        ascending = [False if column == "Date" else True for column in sort_columns]
+        deduped_frame = deduped_frame.sort_values(sort_columns, ascending=ascending, na_position="last")
+
+    return deduped_frame.reset_index(drop=True)
+
+
+def assign_analysis_row_ids(frame: pd.DataFrame, *, upload_id: str) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+
+    identified_frame = frame.copy()
+    dedupe_keys = build_analysis_dedupe_key_series(identified_frame)
+    identified_frame["row_id"] = [
+        str(uuid.uuid5(uuid.NAMESPACE_URL, f"{str(upload_id).strip()}|{dedupe_key}"))
+        for dedupe_key in dedupe_keys.tolist()
+    ]
+    identified_frame["upload_id"] = str(upload_id).strip()
+    return identified_frame
+
+
+def load_current_upload_analysis_frame() -> pd.DataFrame:
+    if not LATEST_RESULTS_PATH.exists():
+        return pd.DataFrame()
+
+    frame = pd.read_csv(LATEST_RESULTS_PATH)
+    return deduplicate_analysis_frame(frame)
+
+
+def save_current_upload_analysis_frame(frame: pd.DataFrame) -> None:
+    frame.to_csv(LATEST_RESULTS_PATH, index=False)
+    LATEST_ANALYSIS_CACHE["signature"] = None
+    LATEST_ANALYSIS_CACHE["context"] = None
+
+
+def get_scope_reference_date(frame: pd.DataFrame) -> pd.Timestamp | None:
+    if frame.empty or "Date" not in frame.columns:
+        return None
+    date_series = pd.to_datetime(frame["Date"], errors="coerce").dropna()
+    if date_series.empty:
+        return None
+    return pd.Timestamp(date_series.max()).normalize()
 
 
 def hydrate_dataframe_from_session(columns: list[str], records: list[dict[str, Any]]) -> pd.DataFrame:
@@ -1919,6 +2171,7 @@ def normalize_quote_comparison_payload(payload: dict[str, Any]) -> dict[str, Any
 
     return {
         "comparison_id": normalize_text_value(payload.get("comparison_id", "")) or None,
+        "upload_id": normalize_text_value(payload.get("upload_id", "")) or None,
         "name": normalize_text_value(payload.get("name", "")),
         "sourcing_need": normalize_text_value(payload.get("sourcing_need", "")),
         "weighting": normalize_quote_weighting(payload.get("weighting")),
@@ -2243,14 +2496,221 @@ def calculate_quote_comparison(comparison: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def load_recipe_analysis_dataframe() -> pd.DataFrame:
-    if not LATEST_RESULTS_PATH.exists():
-        raise ValueError("No analyzed dataset is available yet. Please upload and analyze a file first.")
+def build_analysis_dataframe_from_quote_comparison(comparison: dict[str, Any]) -> pd.DataFrame:
+    normalized_comparison = normalize_quote_comparison_payload(comparison or {})
+    validate_quote_comparison_payload(normalized_comparison)
+    upload_id = normalized_comparison.get("upload_id") or str(uuid.uuid4())
 
-    frame = pd.read_csv(LATEST_RESULTS_PATH)
+    rows: list[dict[str, Any]] = []
+    for index, bid in enumerate(normalized_comparison["bids"], start=1):
+        row_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            "|".join([
+                upload_id,
+                str(index),
+                str(bid.get("supplier_name", "")),
+                str(bid.get("product_name", "")),
+                str(bid.get("unit", "")),
+                str(bid.get("quote_date", ""))
+            ])
+        ))
+        rows.append({
+            "upload_id": upload_id,
+            "row_id": row_id,
+            "Product Name": bid.get("product_name", ""),
+            "Supplier": bid.get("supplier_name", ""),
+            "Unit": bid.get("unit", ""),
+            "Quantity": bid.get("quantity", 0),
+            "Unit Price": bid.get("unit_price", 0),
+            "Date": bid.get("quote_date", ""),
+            "Currency": bid.get("currency", ""),
+            "Delivery Time": bid.get("delivery_time", ""),
+            "Payment Terms": bid.get("payment_term", ""),
+            "Valid Until": bid.get("valid_until", ""),
+            "Notes": bid.get("notes", "")
+        })
+
+    dataframe_columns = [
+        "upload_id",
+        "row_id",
+        *REQUIRED_ANALYSIS_FIELDS,
+        "Currency",
+        "Delivery Time",
+        "Payment Terms",
+        "Valid Until",
+        "Notes"
+    ]
+    return pd.DataFrame(rows, columns=dataframe_columns)
+
+
+def append_analysis_history_rows(
+    result_df: pd.DataFrame,
+    *,
+    upload_id: str,
+    source_name: str,
+    source_type: str,
+    comparison_name: str
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    current_upload_df = deduplicate_analysis_frame(result_df)
+    latest_date_series = current_upload_df["Date"].dropna() if "Date" in current_upload_df.columns else pd.Series(dtype="datetime64[ns]")
+    store = {
+        "uploads": [{
+            "upload_id": upload_id,
+            "source_name": str(source_name or "").strip() or "Quote Compare analysis",
+            "comparison_name": str(comparison_name or "").strip() or str(source_name or "").strip() or "Quote Compare analysis",
+            "source_type": str(source_type or "manual").strip() or "manual",
+            "created_at": now,
+            "updated_at": now,
+            "row_count": int(len(current_upload_df.index)),
+            "product_count": int(current_upload_df["Product Name"].nunique()) if "Product Name" in current_upload_df.columns and not current_upload_df.empty else 0,
+            "latest_date": latest_date_series.max().isoformat() if not latest_date_series.empty else ""
+        }],
+        "rows": serialize_dataframe_records(current_upload_df)
+    }
+    save_analysis_history_store(store)
+
+
+def persist_quote_compare_analysis_results(
+    comparison: dict[str, Any],
+    *,
+    source_name: str,
+    upload_id: str | None = None
+) -> pd.DataFrame:
+    source_df = build_analysis_dataframe_from_quote_comparison(comparison)
+    normalized_upload_id = str(upload_id or source_df["upload_id"].iloc[0]).strip()
+    source_df["upload_id"] = normalized_upload_id
+    analyze_dataframe(source_df, source_name=source_name)
+    result_df = load_current_upload_analysis_frame()
+    if "upload_id" in result_df.columns:
+        result_df["upload_id"] = result_df["upload_id"].fillna("").astype(str)
+        result_df.loc[:, "upload_id"] = normalized_upload_id
+    result_df = assign_analysis_row_ids(result_df, upload_id=normalized_upload_id)
+    save_current_upload_analysis_frame(result_df)
+    append_analysis_history_rows(
+        result_df,
+        upload_id=normalized_upload_id,
+        source_name=source_name,
+        source_type=str(normalize_quote_comparison_payload(comparison or {}).get("source_type") or "manual"),
+        comparison_name=str(normalize_quote_comparison_payload(comparison or {}).get("name") or source_name or "Quote Compare analysis")
+    )
+    return result_df
+
+
+def get_latest_quote_compare_analysis_session() -> dict[str, Any] | None:
+    if not QUOTE_COMPARE_SESSION_CACHE_DIR.exists():
+        return None
+
+    session_files = sorted(
+        QUOTE_COMPARE_SESSION_CACHE_DIR.glob("*.json"),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True
+    )
+    for session_path in session_files:
+        try:
+            payload = json.loads(session_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            logger.warning("Skipping invalid quote compare session file: %s", session_path)
+            continue
+        validated_payload = validate_quote_compare_active_session(payload)
+        if validated_payload and isinstance(validated_payload.get("comparison"), dict):
+            return validated_payload
+
+    return None
+
+
+def get_latest_saved_quote_compare_analysis() -> dict[str, Any] | None:
+    store = load_quote_comparisons_store()
+    comparisons = [item for item in store.get("comparisons", []) if isinstance(item, dict) and item.get("bids")]
+    if not comparisons:
+        return None
+
+    def get_sort_key(item: dict[str, Any]) -> tuple[datetime, str]:
+        raw_timestamp = item.get("updated_at") or item.get("created_at") or ""
+        try:
+            timestamp = datetime.fromisoformat(str(raw_timestamp).replace("Z", "+00:00"))
+        except ValueError:
+            timestamp = datetime.min.replace(tzinfo=timezone.utc)
+        return (timestamp, str(item.get("name") or ""))
+
+    return sorted(comparisons, key=get_sort_key, reverse=True)[0]
+
+
+def restore_latest_quote_compare_analysis_results() -> pd.DataFrame | None:
+    latest_session = get_latest_quote_compare_analysis_session()
+    if latest_session and isinstance(latest_session.get("comparison"), dict):
+        source_name = (
+            str(latest_session.get("filename") or "").strip()
+            or str(latest_session["comparison"].get("name") or "").strip()
+            or "Quote Compare analysis"
+        )
+        return persist_quote_compare_analysis_results(latest_session["comparison"], source_name=source_name)
+
+    latest_comparison = get_latest_saved_quote_compare_analysis()
+    if latest_comparison:
+        source_name = str(latest_comparison.get("name") or "").strip() or "Quote Compare analysis"
+        return persist_quote_compare_analysis_results(latest_comparison, source_name=source_name)
+
+    return None
+
+
+def has_recipe_analysis_source() -> bool:
+    if LATEST_RESULTS_PATH.exists():
+        try:
+            frame = load_current_upload_analysis_frame()
+            if not frame.empty:
+                return True
+        except Exception:
+            logger.exception("Failed to inspect latest results while checking recipe analysis availability")
+    return False
+
+
+def get_latest_analysis_upload_meta() -> dict[str, Any] | None:
+    seed_analysis_history_from_latest_results()
+    store = load_analysis_history_store()
+    uploads = [item for item in store.get("uploads", []) if isinstance(item, dict) and item.get("upload_id")]
+    if not uploads:
+        return None
+
+    def sort_key(item: dict[str, Any]) -> tuple[str, str]:
+        return (str(item.get("updated_at") or ""), str(item.get("upload_id") or ""))
+
+    return sorted(uploads, key=sort_key, reverse=True)[0]
+
+
+def load_analysis_history_frame() -> pd.DataFrame:
+    if not LATEST_RESULTS_PATH.exists():
+        return pd.DataFrame()
+    return load_current_upload_analysis_frame()
+
+
+def filter_analysis_frame_by_scope(frame: pd.DataFrame, scope: str) -> pd.DataFrame:
+    return frame.copy()
+
+
+def build_analysis_scope_summary(frame: pd.DataFrame, *, scope: str) -> dict[str, Any]:
+    latest_upload = get_latest_analysis_upload_meta()
+    dated_rows = frame["Date"].dropna() if "Date" in frame.columns else pd.Series(dtype="datetime64[ns]")
+    return {
+        "scope": "current_upload",
+        "scope_label": get_analysis_scope_label("current_upload"),
+        "row_count": int(len(frame.index)),
+        "product_count": int(frame["Product Name"].nunique()) if "Product Name" in frame.columns and not frame.empty else 0,
+        "supplier_count": int(frame["Supplier"].nunique()) if "Supplier" in frame.columns and not frame.empty else 0,
+        "current_upload_id": str((latest_upload or {}).get("upload_id") or "").strip(),
+        "current_upload_name": str((latest_upload or {}).get("source_name") or "").strip(),
+        "date_range": {
+            "start": dated_rows.min().strftime("%Y-%m-%d") if not dated_rows.empty else "",
+            "end": dated_rows.max().strftime("%Y-%m-%d") if not dated_rows.empty else ""
+        }
+    }
+
+
+def normalize_recipe_analysis_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         raise ValueError("No analyzed dataset is available yet. Please upload and analyze a file first.")
 
+    frame = frame.copy()
     frame["Product Name"] = frame["Product Name"].fillna("").astype(str).str.strip()
     frame["Unit"] = frame["Unit"].fillna("").astype(str).str.strip()
     frame["Supplier"] = frame["Supplier"].fillna("").astype(str).str.strip()
@@ -2263,6 +2723,18 @@ def load_recipe_analysis_dataframe() -> pd.DataFrame:
         raise ValueError("No analyzed dataset is available yet. Please upload and analyze a file first.")
 
     return frame
+
+
+def load_recipe_analysis_dataframe(*, scope: str = "current_upload") -> pd.DataFrame:
+    if LATEST_RESULTS_PATH.exists():
+        try:
+            return normalize_recipe_analysis_frame(load_current_upload_analysis_frame())
+        except ValueError:
+            pass
+        except Exception:
+            logger.exception("Failed to load latest results for Recipes")
+
+    raise ValueError("No analyzed dataset is available yet. Please upload and analyze a file first.")
 
 
 def build_recipe_product_catalog(frame: pd.DataFrame) -> list[dict[str, Any]]:
@@ -2406,6 +2878,8 @@ def resolve_recipe_purchase_base_unit(
             return RECIPE_BASE_UNITS.get(usage_category, normalized_usage_unit)
         return "each"
 
+    if normalized_base_unit and base_category and base_category != "package":
+        return normalized_base_unit
     return RECIPE_BASE_UNITS.get(purchase_category, normalized_purchase_unit)
 
 
@@ -2430,7 +2904,7 @@ def infer_recipe_purchase_size(
     if purchase_meta and base_meta and purchase_meta[0] == base_meta[0] and base_meta[1] > 0:
         return purchase_meta[1] / base_meta[1]
 
-    return 1.0
+    return 0.0
 
 
 def convert_recipe_quantity_to_base(quantity: float, source_unit: str, base_unit: str) -> float:
@@ -2471,8 +2945,9 @@ def resolve_recipe_usage_ratio(
         or not resolved_base_unit
         or usage_category == "package"
         or base_category == "package"
-        or (purchase_category != "package" and purchase_category != usage_category)
         or (purchase_category == "package" and usage_category != base_category)
+        or (purchase_category and purchase_category != "package" and purchase_category != usage_category)
+        or (not purchase_category and usage_category != base_category)
     ):
         raise ValueError("Selected unit type does not match product type.")
 
@@ -2536,7 +3011,15 @@ def normalize_recipe_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "name": str(payload.get("name", "")).strip(),
         "yield_portions": float(normalize_request_value(payload.get("yield_portions", 0)) or 0),
         "pricing_mode": str(payload.get("pricing_mode", "")).strip(),
-        "ingredients": normalized_ingredients
+        "ingredients": normalized_ingredients,
+        "selling_price": float(normalize_request_value(payload.get("selling_price", 0)) or 0),
+        "target_food_cost_pct": float(normalize_request_value(payload.get("target_food_cost_pct", 0)) or 0),
+        "total_recipe_cost": float(normalize_request_value(payload.get("total_recipe_cost", 0)) or 0),
+        "cost_per_portion": float(normalize_request_value(payload.get("cost_per_portion", 0)) or 0),
+        "gross_profit": float(normalize_request_value(payload.get("gross_profit", 0)) or 0),
+        "gross_margin_pct": float(normalize_request_value(payload.get("gross_margin_pct", 0)) or 0),
+        "food_cost_pct": float(normalize_request_value(payload.get("food_cost_pct", 0)) or 0),
+        "suggested_selling_price": float(normalize_request_value(payload.get("suggested_selling_price", 0)) or 0)
     }
 
 
@@ -2567,8 +3050,9 @@ def validate_recipe_payload(recipe: dict[str, Any]) -> None:
         if (
             usage_category == "package"
             or base_category == "package"
-            or (purchase_category != "package" and purchase_category != usage_category)
             or (purchase_category == "package" and usage_category != base_category)
+            or (purchase_category and purchase_category != "package" and purchase_category != usage_category)
+            or (not purchase_category and usage_category != base_category)
         ):
             raise ValueError("Selected unit type does not match product type.")
 
@@ -2645,6 +3129,33 @@ def calculate_recipe_cost(recipe: dict[str, Any], frame: pd.DataFrame) -> dict[s
     }
 
 
+def calculate_recipe_pricing_metrics(
+    recipe: dict[str, Any],
+    calculation: dict[str, Any]
+) -> dict[str, float]:
+    cost_per_portion = float(calculation.get("cost_per_portion") or 0)
+    total_recipe_cost = float(calculation.get("total_recipe_cost") or 0)
+    selling_price = float(recipe.get("selling_price") or 0)
+    target_food_cost_pct = float(recipe.get("target_food_cost_pct") or 0)
+    gross_profit = selling_price - cost_per_portion if selling_price > 0 else 0.0
+    gross_margin_pct = ((gross_profit / selling_price) * 100) if selling_price > 0 else 0.0
+    food_cost_pct = ((cost_per_portion / selling_price) * 100) if selling_price > 0 else 0.0
+    suggested_selling_price = (
+        cost_per_portion / (target_food_cost_pct / 100)
+        if target_food_cost_pct > 0 else 0.0
+    )
+    return {
+        "selling_price": round(selling_price, 2),
+        "target_food_cost_pct": round(target_food_cost_pct, 2),
+        "total_recipe_cost": round(total_recipe_cost, 2),
+        "cost_per_portion": round(cost_per_portion, 2),
+        "gross_profit": round(gross_profit, 2),
+        "gross_margin_pct": round(gross_margin_pct, 2),
+        "food_cost_pct": round(food_cost_pct, 2),
+        "suggested_selling_price": round(suggested_selling_price, 2)
+    }
+
+
 def enrich_saved_recipes_with_costs(recipes: list[dict[str, Any]], frame: pd.DataFrame) -> list[dict[str, Any]]:
     enriched_recipes: list[dict[str, Any]] = []
     for recipe in recipes or []:
@@ -2652,8 +3163,10 @@ def enrich_saved_recipes_with_costs(recipes: list[dict[str, Any]], frame: pd.Dat
         try:
             normalized_recipe = normalize_recipe_payload(recipe)
             calculation = calculate_recipe_cost(normalized_recipe, frame)
-            enriched_recipe["total_recipe_cost"] = calculation["total_recipe_cost"]
-            enriched_recipe["cost_per_portion"] = calculation["cost_per_portion"]
+            if "total_recipe_cost" not in enriched_recipe:
+                enriched_recipe["total_recipe_cost"] = calculation["total_recipe_cost"]
+            if "cost_per_portion" not in enriched_recipe:
+                enriched_recipe["cost_per_portion"] = calculation["cost_per_portion"]
         except ValueError:
             enriched_recipe["total_recipe_cost"] = float(recipe.get("total_recipe_cost") or 0)
             enriched_recipe["cost_per_portion"] = float(recipe.get("cost_per_portion") or 0)
@@ -3154,6 +3667,20 @@ def analyze_dataframe(df: pd.DataFrame, *, source_name: str) -> dict:
 
     working_df["Quantity"] = working_df["Quantity"].clip(lower=0)
     working_df["Date"] = working_df["Date"].dt.strftime("%Y-%m-%d")
+    if "Currency" in working_df.columns:
+        working_df["Currency"] = working_df["Currency"].fillna("").astype(str).str.strip().str.upper()
+    if "Delivery Time" in working_df.columns:
+        working_df["Delivery Time"] = working_df["Delivery Time"].fillna("").astype(str).str.strip()
+    if "Payment Terms" in working_df.columns:
+        working_df["Payment Terms"] = working_df["Payment Terms"].fillna("").astype(str).str.strip()
+    if "Valid Until" in working_df.columns:
+        working_df["Valid Until"] = pd.to_datetime(working_df["Valid Until"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+    if "Notes" in working_df.columns:
+        working_df["Notes"] = working_df["Notes"].fillna("").astype(str).str.strip()
+    if "upload_id" in working_df.columns:
+        working_df["upload_id"] = working_df["upload_id"].fillna("").astype(str).str.strip()
+    if "row_id" in working_df.columns:
+        working_df["row_id"] = working_df["row_id"].fillna("").astype(str).str.strip()
     grouping_columns = ["Product Name", "Unit"]
     working_df["Average Price"] = working_df.groupby(grouping_columns)["Unit Price"].transform("mean")
     working_df["Overpay Pct"] = ((working_df["Unit Price"] - working_df["Average Price"]) / working_df["Average Price"].replace(0, pd.NA)) * 100
@@ -3195,6 +3722,12 @@ def analyze_dataframe(df: pd.DataFrame, *, source_name: str) -> dict:
         "Product Key",
         "Product Display"
     ]
+    leading_columns = [column for column in ["upload_id", "row_id"] if column in working_df.columns]
+    trailing_columns = [
+        column for column in ["Currency", "Delivery Time", "Payment Terms", "Valid Until", "Notes"]
+        if column in working_df.columns
+    ]
+    result_columns = leading_columns + result_columns + trailing_columns
 
     result_df = working_df[result_columns].copy()
     result_df["Quantity"] = result_df["Quantity"].round(2)
@@ -3339,11 +3872,21 @@ def build_page_context(
     active_view: str = "quote_compare"
 ) -> dict[str, Any]:
     context_started_at = perf_counter()
-    has_analysis = LATEST_RESULTS_PATH.exists()
+    has_saved_recipes = False
+    if active_view == "recipes":
+        try:
+            has_saved_recipes = bool(load_recipes_store().get("recipes", []))
+        except Exception:
+            logger.exception("Failed to inspect saved recipes while building page context")
+            has_saved_recipes = False
+    has_analysis = has_recipe_analysis_source() if active_view == "recipes" else LATEST_RESULTS_PATH.exists()
+    recipes_has_visible_content = has_analysis or has_saved_recipes
     context: dict[str, Any] = {
         "request": request,
         "active_view": active_view,
         "has_analysis": has_analysis,
+        "has_saved_recipes": has_saved_recipes,
+        "recipes_has_visible_content": recipes_has_visible_content,
         "persisted_analysis": has_analysis,
         "rows": [],
         "summary": None,
@@ -3361,9 +3904,10 @@ def build_page_context(
         context["error"] = error
 
     logger.info(
-        "[page context timing] active_view=%s has_analysis=%s total_ms=%.1f",
+        "[page context timing] active_view=%s has_analysis=%s has_saved_recipes=%s total_ms=%.1f",
         active_view,
         has_analysis,
+        has_saved_recipes,
         (perf_counter() - context_started_at) * 1000
     )
     return context
@@ -3392,6 +3936,8 @@ def create_app() -> FastAPI:
         logger.info("Recipes file ready: %s", RECIPES_PATH)
         ensure_quote_comparisons_file()
         logger.info("Quote comparisons file ready: %s", QUOTE_COMPARISONS_PATH)
+        ensure_analysis_history_file()
+        logger.info("Analysis history file ready: %s", ANALYSIS_HISTORY_PATH)
         try:
             templates.get_template(INDEX_TEMPLATE)
             logger.info("Template preflight passed: %s", INDEX_TEMPLATE)
@@ -3501,22 +4047,62 @@ def create_app() -> FastAPI:
         })
 
     @app.get("/recipes/bootstrap")
-    def recipes_bootstrap():
+    def recipes_bootstrap(scope: str = "current_upload"):
         try:
             frame = load_recipe_analysis_dataframe()
-        except ValueError as exc:
-            return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+        except ValueError:
+            frame = pd.DataFrame()
 
         recipes = load_recipes_store().get("recipes", [])
+        if frame.empty:
+            products = []
+            enriched_recipes = recipes
+        else:
+            products = build_recipe_product_catalog(frame)
+            enriched_recipes = enrich_saved_recipes_with_costs(recipes, frame)
+
         return JSONResponse({
             "success": True,
+            "scope_options": build_analysis_scope_options(),
+            "scope_summary": build_analysis_scope_summary(frame, scope="current_upload"),
             "pricing_modes": [
                 {"value": value, "label": label}
                 for value, label in RECIPE_PRICING_MODES.items()
             ],
-            "products": build_recipe_product_catalog(frame),
-            "recipes": enrich_saved_recipes_with_costs(recipes, frame)
+            "products": products,
+            "recipes": enriched_recipes
         })
+
+    @app.get("/analysis/scope-bootstrap")
+    def analysis_scope_bootstrap(scope: str = "current_upload"):
+        try:
+            frame = load_recipe_analysis_dataframe()
+        except ValueError:
+            frame = pd.DataFrame()
+        summary = build_analysis_scope_summary(frame, scope="current_upload")
+        return JSONResponse({
+            "success": True,
+            "has_analysis": not frame.empty,
+            "scope_options": build_analysis_scope_options(),
+            "scope_summary": summary
+        })
+
+    @app.post("/workspace/reset")
+    def workspace_reset():
+        try:
+            reset_workspace_data_store()
+            return JSONResponse({
+                "success": True,
+                "has_analysis": False,
+                "scope_summary": build_analysis_scope_summary(pd.DataFrame(), scope="current_upload"),
+                "message": "Workspace data reset successfully."
+            })
+        except Exception:
+            logger.exception("Workspace reset failed")
+            return JSONResponse(
+                {"success": False, "message": "Workspace reset failed."},
+                status_code=500
+            )
 
     @app.post("/recipes/calculate")
     def calculate_recipe(payload: RecipePayload):
@@ -3539,6 +4125,7 @@ def create_app() -> FastAPI:
             frame = load_recipe_analysis_dataframe()
             normalized_recipe = normalize_recipe_payload(payload.model_dump())
             calculation = calculate_recipe_cost(normalized_recipe, frame)
+            pricing_metrics = calculate_recipe_pricing_metrics(normalized_recipe, calculation)
         except ValueError as exc:
             return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
 
@@ -3554,8 +4141,7 @@ def create_app() -> FastAPI:
             "yield_portions": normalized_recipe["yield_portions"],
             "pricing_mode": normalized_recipe["pricing_mode"],
             "ingredients": normalized_recipe["ingredients"],
-            "total_recipe_cost": calculation["total_recipe_cost"],
-            "cost_per_portion": calculation["cost_per_portion"],
+            **pricing_metrics,
             "updated_at": now,
             "created_at": existing_recipe.get("created_at") if existing_recipe else now
         }
@@ -3847,12 +4433,18 @@ def create_app() -> FastAPI:
             if import_result["valid_row_count"] <= 0:
                 raise ValueError("No valid supplier offer rows were found after filtering invalid or missing data.")
             normalized_comparison = normalize_quote_comparison_payload({
+                "upload_id": session_id,
                 "name": Path(filename).stem.replace("_", " ").strip() or "Uploaded quote comparison",
                 "sourcing_need": "",
                 "source_type": "upload",
                 "bids": import_result["bids"]
             })
             evaluation = calculate_quote_comparison(normalized_comparison)
+            persist_quote_compare_analysis_results(
+                normalized_comparison,
+                source_name=filename or normalized_comparison["name"] or "Quote Compare analysis",
+                upload_id=session_id
+            )
             if session_id:
                 lightweight_session_payload = {
                     "session_id": session_id,
@@ -3909,6 +4501,11 @@ def create_app() -> FastAPI:
         try:
             normalized_comparison = normalize_quote_comparison_payload(payload.model_dump())
             evaluation = calculate_quote_comparison(normalized_comparison)
+            persist_quote_compare_analysis_results(
+                normalized_comparison,
+                source_name=normalized_comparison["name"] or "Quote Compare analysis",
+                upload_id=normalized_comparison.get("upload_id")
+            )
         except ValueError as exc:
             return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
 
@@ -3916,55 +4513,6 @@ def create_app() -> FastAPI:
             "success": True,
             "comparison": normalized_comparison,
             "evaluation": evaluation
-        })
-
-    @app.post("/quote-compare/save")
-    def save_quote_comparison(payload: QuoteComparisonPayload):
-        try:
-            normalized_comparison = normalize_quote_comparison_payload(payload.model_dump())
-            validate_quote_comparison_payload(normalized_comparison, require_name=True)
-            evaluation = calculate_quote_comparison(normalized_comparison)
-        except ValueError as exc:
-            return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
-
-        now = datetime.now(timezone.utc).isoformat()
-        store = load_quote_comparisons_store()
-        comparisons = store.get("comparisons", [])
-        comparison_id = normalized_comparison["comparison_id"] or str(uuid.uuid4())
-        existing_comparison = next(
-            (comparison for comparison in comparisons if comparison.get("comparison_id") == comparison_id),
-            None
-        )
-
-        saved_comparison = {
-            "comparison_id": comparison_id,
-            "name": normalized_comparison["name"],
-            "sourcing_need": normalized_comparison["sourcing_need"],
-            "weighting": normalized_comparison["weighting"],
-            "source_type": normalized_comparison["source_type"],
-            "mode": normalized_comparison["mode"],
-            "bids": normalized_comparison["bids"],
-            "updated_at": now,
-            "created_at": existing_comparison.get("created_at") if existing_comparison else now
-        }
-
-        if existing_comparison:
-            comparisons = [
-                saved_comparison if comparison.get("comparison_id") == comparison_id else comparison
-                for comparison in comparisons
-            ]
-        else:
-            comparisons.append(saved_comparison)
-
-        store["comparisons"] = comparisons
-        save_quote_comparisons_store(store)
-
-        return JSONResponse({
-            "success": True,
-            "comparison": saved_comparison,
-            "evaluation": evaluation,
-            "comparisons": comparisons,
-            "message": f"Comparison saved: {saved_comparison['name']}"
         })
 
     @app.post("/quote-compare/delete")

@@ -24,7 +24,8 @@
     const workspaceDefaults = {
         guidePanelOpen: false,
         notesPanelOpen: false,
-        workspaceNotes: ""
+        workspaceNotes: "",
+        workspaceNotesV2: ""
     };
     const analyzerRefreshResetKeys = new Set([
         "guidedEntryCollapsed",
@@ -318,7 +319,7 @@
             notesPanel: document.getElementById("notesPanel"),
             closeGuidePanelButton: document.getElementById("closeGuidePanelButton"),
             closeNotesPanelButton: document.getElementById("closeNotesPanelButton"),
-            notesTextarea: document.getElementById("notesTextarea"),
+            noteFields: Array.from(document.querySelectorAll("[data-notes-field]")),
             notesSavedIndicator: document.getElementById("notesSavedIndicator"),
             clearNotesButton: document.getElementById("clearNotesButton"),
             resultsTable: document.getElementById("resultsTable"),
@@ -436,10 +437,62 @@
         }, 1200);
     }
 
+    function readWorkspaceNotesBundle() {
+        const fallbackText = String(readWorkspacePreference("workspaceNotes") || "");
+        const fallbackBundle = {
+            quick_notes: fallbackText,
+            supplier_notes: "",
+            follow_up_items: "",
+            negotiation_reminders: ""
+        };
+        const raw = String(readWorkspacePreference("workspaceNotesV2") || "").trim();
+        if (!raw) {
+            return fallbackBundle;
+        }
+        try {
+            const parsed = JSON.parse(raw);
+            return {
+                quick_notes: String(parsed.quick_notes || fallbackBundle.quick_notes || ""),
+                supplier_notes: String(parsed.supplier_notes || ""),
+                follow_up_items: String(parsed.follow_up_items || ""),
+                negotiation_reminders: String(parsed.negotiation_reminders || "")
+            };
+        } catch (error) {
+            return fallbackBundle;
+        }
+    }
+
+    function writeWorkspaceNotesBundle(bundle) {
+        const safeBundle = {
+            quick_notes: String(bundle.quick_notes || ""),
+            supplier_notes: String(bundle.supplier_notes || ""),
+            follow_up_items: String(bundle.follow_up_items || ""),
+            negotiation_reminders: String(bundle.negotiation_reminders || "")
+        };
+        writeWorkspacePreference("workspaceNotesV2", JSON.stringify(safeBundle));
+        writeWorkspacePreference("workspaceNotes", safeBundle.quick_notes);
+    }
+
+    function getWorkspaceNotesFromInputs(elements) {
+        const bundle = {
+            quick_notes: "",
+            supplier_notes: "",
+            follow_up_items: "",
+            negotiation_reminders: ""
+        };
+        (elements.noteFields || []).forEach((field) => {
+            const key = field.dataset.notesField;
+            if (Object.prototype.hasOwnProperty.call(bundle, key)) {
+                bundle[key] = field.value || "";
+            }
+        });
+        return bundle;
+    }
+
     function initSideWorkspace(elements) {
         const guideOpen = readWorkspacePreference("guidePanelOpen") === "true";
         const notesOpen = readWorkspacePreference("notesPanelOpen") === "true";
-        const savedNotes = String(readWorkspacePreference("workspaceNotes") || "");
+        const savedNotes = readWorkspaceNotesBundle();
 
         if (elements.guidePanelToggle) {
             elements.guidePanelToggle.hidden = false;
@@ -447,11 +500,13 @@
         if (elements.notesPanelToggle) {
             elements.notesPanelToggle.hidden = false;
         }
-        if (elements.notesTextarea) {
-            elements.notesTextarea.value = savedNotes;
-        }
+        (elements.noteFields || []).forEach((field) => {
+            const key = field.dataset.notesField;
+            field.value = Object.prototype.hasOwnProperty.call(savedNotes, key) ? savedNotes[key] : "";
+        });
         if (elements.notesSavedIndicator) {
-            elements.notesSavedIndicator.textContent = savedNotes ? "Saved" : "Ready";
+            const hasSavedNotes = Object.values(savedNotes).some((value) => String(value || "").trim() !== "");
+            elements.notesSavedIndicator.textContent = hasSavedNotes ? "Saved" : "Ready";
         }
 
         setSidePanelState(elements.guidePanel, elements.guidePanelToggle, guideOpen, "guidePanelOpen");
@@ -490,21 +545,29 @@
             });
         }
 
-        if (elements.notesTextarea && elements.notesTextarea.dataset.bound !== "true") {
-            elements.notesTextarea.dataset.bound = "true";
-            elements.notesTextarea.addEventListener("input", () => {
-                writeWorkspacePreference("workspaceNotes", elements.notesTextarea.value);
+        (elements.noteFields || []).forEach((field) => {
+            if (field.dataset.bound === "true") {
+                return;
+            }
+            field.dataset.bound = "true";
+            field.addEventListener("input", () => {
+                writeWorkspaceNotesBundle(getWorkspaceNotesFromInputs(elements));
                 flashSavedIndicator(elements);
             });
-        }
+        });
 
         if (elements.clearNotesButton && elements.clearNotesButton.dataset.bound !== "true") {
             elements.clearNotesButton.dataset.bound = "true";
             elements.clearNotesButton.addEventListener("click", () => {
-                if (elements.notesTextarea) {
-                    elements.notesTextarea.value = "";
-                }
-                writeWorkspacePreference("workspaceNotes", "");
+                (elements.noteFields || []).forEach((field) => {
+                    field.value = "";
+                });
+                writeWorkspaceNotesBundle({
+                    quick_notes: "",
+                    supplier_notes: "",
+                    follow_up_items: "",
+                    negotiation_reminders: ""
+                });
                 if (elements.notesSavedIndicator) {
                     elements.notesSavedIndicator.textContent = "Cleared";
                     elements.notesSavedIndicator.classList.add("is-active");

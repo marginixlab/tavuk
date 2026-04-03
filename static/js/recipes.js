@@ -1,5 +1,6 @@
 (function () {
     const DEFAULT_PRICING_MODE = "latest_price";
+    const SHARED_DATA_SCOPE_KEY = "shared_analysis_scope_v1";
     const RECIPE_UNIT_OPTIONS = ["g", "kg", "oz", "lb", "ml", "l", "fl oz", "each", "portion"];
     const PACKAGE_BASE_UNIT_OPTIONS = ["g", "ml", "each"];
     const UNIT_TYPE_MAP = {
@@ -105,6 +106,7 @@
             recipeNameInput: document.getElementById("recipeNameInput"),
             recipeYieldInput: document.getElementById("recipeYieldInput"),
             recipePricingModeSelect: document.getElementById("recipePricingModeSelect"),
+            recipeDataScopeSummary: document.getElementById("recipeDataScopeSummary"),
             addRecipeIngredientButton: document.getElementById("addRecipeIngredientButton"),
             recipeIngredientsList: document.getElementById("recipeIngredientsList"),
             recalculateRecipeButton: document.getElementById("recalculateRecipeButton"),
@@ -118,16 +120,24 @@
             recipeCostPerPortion: document.getElementById("recipeCostPerPortion"),
             recipeMainCostDriver: document.getElementById("recipeMainCostDriver"),
             recipeMainCostDriverCopy: document.getElementById("recipeMainCostDriverCopy"),
+            recipeSellingPriceInput: document.getElementById("recipeSellingPriceInput"),
+            recipeTargetFoodCostInput: document.getElementById("recipeTargetFoodCostInput"),
+            recipePricingTotalCost: document.getElementById("recipePricingTotalCost"),
+            recipePricingCostPerPortion: document.getElementById("recipePricingCostPerPortion"),
+            recipeGrossProfitValue: document.getElementById("recipeGrossProfitValue"),
+            recipeGrossMarginValue: document.getElementById("recipeGrossMarginValue"),
+            recipeFoodCostValue: document.getElementById("recipeFoodCostValue"),
+            recipeSuggestedPriceValue: document.getElementById("recipeSuggestedPriceValue"),
             recipePricingModeChip: document.getElementById("recipePricingModeChip"),
             recipeBreakdownList: document.getElementById("recipeBreakdownList"),
-            openRecipeLibraryButton: document.getElementById("openRecipeLibraryButton"),
             createRecipeFromLibraryButton: document.getElementById("createRecipeFromLibraryButton"),
             openRecipeLibraryInlineButton: document.getElementById("openRecipeLibraryInlineButton"),
             recipeLibraryOverlay: document.getElementById("recipeLibraryOverlay"),
             closeRecipeLibraryButton: document.getElementById("closeRecipeLibraryButton"),
             recipeLibrarySearchInput: document.getElementById("recipeLibrarySearchInput"),
             recipeLibrarySortSelect: document.getElementById("recipeLibrarySortSelect"),
-            recipeLibraryList: document.getElementById("recipeLibraryList")
+            recipeLibraryList: document.getElementById("recipeLibraryList"),
+            recipeLibraryDetail: document.getElementById("recipeLibraryDetail")
         };
     }
 
@@ -144,9 +154,43 @@
         return `$${Number(value || 0).toFixed(2)}`;
     }
 
+    function formatPercent(value) {
+        return `${Number(value || 0).toFixed(1)}%`;
+    }
+
+    function formatOptionalCurrency(value) {
+        const numericValue = Number(value);
+        return Number.isFinite(numericValue) && numericValue > 0 ? formatCurrency(numericValue) : "--";
+    }
+
+    function formatOptionalPercent(value) {
+        const numericValue = Number(value);
+        return Number.isFinite(numericValue) && numericValue > 0 ? formatPercent(numericValue) : "--";
+    }
+
+    function syncPricingInputsFromElements(elements, state) {
+        if (!state) {
+            return;
+        }
+        if (elements?.recipeSellingPriceInput) {
+            state.sellingPrice = elements.recipeSellingPriceInput.value;
+        }
+        if (elements?.recipeTargetFoodCostInput) {
+            state.targetFoodCostPct = elements.recipeTargetFoodCostInput.value;
+        }
+    }
+
     function hasAnalysis(elements) {
         const stateHost = elements.mainDashboardView || elements.recipesWorkspaceState;
         return stateHost?.dataset.hasAnalysis === "true";
+    }
+
+    function readSharedDataScope() {
+        return "current_upload";
+    }
+
+    function writeSharedDataScope() {
+        return;
     }
 
     function normalizeUnit(unit) {
@@ -206,13 +250,16 @@
         if (purchaseMeta && usageMeta && purchaseMeta.type === usageMeta.type && usageMeta.factor > 0) {
             return purchaseMeta.factor / usageMeta.factor;
         }
-        return 1;
+        return 0;
     }
 
     function resolvePurchaseBaseUnit(purchaseUnit, usageUnit, fallbackBaseUnit = "") {
         const normalizedPurchaseUnit = normalizeUnit(purchaseUnit);
         const normalizedUsageUnit = normalizeUnit(usageUnit);
         const normalizedFallback = normalizeUnit(fallbackBaseUnit);
+        if (normalizedPurchaseUnit && normalizedUsageUnit && normalizedPurchaseUnit === normalizedUsageUnit) {
+            return normalizedPurchaseUnit;
+        }
         if (isPackageUnit(normalizedPurchaseUnit)) {
             const fallbackType = getUnitType(normalizedFallback);
             if (fallbackType && fallbackType !== "package") {
@@ -228,6 +275,9 @@
         if (purchaseType === "package") {
             return "each";
         }
+        if (normalizedFallback && getUnitType(normalizedFallback) && getUnitType(normalizedFallback) !== "package") {
+            return normalizedFallback;
+        }
         return getBaseUnitForType(purchaseType) || normalizedPurchaseUnit || normalizedFallback || "";
     }
 
@@ -236,7 +286,7 @@
         const purchaseType = getUnitType(ingredient?.purchase_unit);
         const purchaseBaseType = getUnitType(ingredient?.purchase_base_unit);
         if (!usageType || !purchaseType) {
-            return false;
+            return Boolean(usageType && purchaseType !== "package" && purchaseBaseType && usageType !== purchaseBaseType);
         }
         if (purchaseType === "package") {
             return !purchaseBaseType || purchaseBaseType === "package" || usageType !== purchaseBaseType;
@@ -270,11 +320,12 @@
     }
 
     function normalizeIngredientDraft(ingredient = {}, state = null) {
-        const productName = String(ingredient.product_name || "").trim();
-        const sourcePurchaseUnit = state ? getSourcePurchaseUnitForProduct(state, productName) : "";
+        const rawProductName = String(ingredient.product_name || "");
+        const lookupProductName = rawProductName.trim();
+        const sourcePurchaseUnit = state ? getSourcePurchaseUnitForProduct(state, lookupProductName) : "";
         const purchaseUnit = normalizeUnit(sourcePurchaseUnit || ingredient.purchase_unit || ingredient.unit || "");
         const storedBaseUnit = normalizeUnit(ingredient.purchase_base_unit || ingredient.conversion_unit || "");
-        const rememberedConversion = getRememberedPackageConversion(state, productName, purchaseUnit);
+        const rememberedConversion = getRememberedPackageConversion(state, lookupProductName, purchaseUnit);
         const purchaseBaseUnit = resolvePurchaseBaseUnit(
             purchaseUnit,
             ingredient.unit || storedBaseUnit || purchaseUnit,
@@ -288,24 +339,32 @@
         const usageUnit = getUnitType(candidateUsageUnit) === "package"
             ? normalizeUnit(defaultUsageUnit || purchaseBaseUnit || "each")
             : candidateUsageUnit;
+        const explicitConversionRequired = Boolean(
+            purchaseUnit
+            && usageUnit
+            && purchaseUnit !== usageUnit
+        );
+        const resolvedPurchaseBaseUnit = explicitConversionRequired
+            ? normalizeUnit(ingredient.purchase_base_unit || usageUnit || purchaseBaseUnit)
+            : normalizeUnit(usageUnit || purchaseUnit || purchaseBaseUnit);
         const purchaseSize = Number(
             ingredient.purchase_size
             || rememberedConversion?.purchase_size
             || 0
         );
         const normalizedIngredient = {
-            product_name: productName,
+            product_name: rawProductName,
             quantity: ingredient.quantity === 0 ? 0 : (ingredient.quantity || ""),
             unit: usageUnit,
             purchase_unit: purchaseUnit,
             purchase_size: purchaseSize > 0
                 ? purchaseSize
-                : inferPurchaseSize(purchaseUnit, purchaseBaseUnit || usageUnit),
-            purchase_base_unit: purchaseBaseUnit || resolvePurchaseBaseUnit(purchaseUnit, usageUnit)
+                : inferPurchaseSize(purchaseUnit, resolvedPurchaseBaseUnit || usageUnit),
+            purchase_base_unit: resolvedPurchaseBaseUnit
         };
         rememberPackageConversion(
             state,
-            normalizedIngredient.product_name,
+            lookupProductName,
             normalizedIngredient.purchase_unit,
             normalizedIngredient.purchase_size,
             normalizedIngredient.purchase_base_unit
@@ -319,6 +378,14 @@
         normalizedRecipe.name = String(normalizedRecipe.name || "");
         normalizedRecipe.yield_portions = normalizedRecipe.yield_portions || 1;
         normalizedRecipe.pricing_mode = normalizedRecipe.pricing_mode || DEFAULT_PRICING_MODE;
+        normalizedRecipe.selling_price = Number(normalizedRecipe.selling_price || 0);
+        normalizedRecipe.target_food_cost_pct = Number(normalizedRecipe.target_food_cost_pct || 0);
+        normalizedRecipe.total_recipe_cost = Number(normalizedRecipe.total_recipe_cost || 0);
+        normalizedRecipe.cost_per_portion = Number(normalizedRecipe.cost_per_portion || 0);
+        normalizedRecipe.gross_profit = Number(normalizedRecipe.gross_profit || 0);
+        normalizedRecipe.gross_margin_pct = Number(normalizedRecipe.gross_margin_pct || 0);
+        normalizedRecipe.food_cost_pct = Number(normalizedRecipe.food_cost_pct || 0);
+        normalizedRecipe.suggested_selling_price = Number(normalizedRecipe.suggested_selling_price || 0);
         normalizedRecipe.ingredients = Array.isArray(normalizedRecipe.ingredients) && normalizedRecipe.ingredients.length
             ? normalizedRecipe.ingredients.map((ingredient) => normalizeIngredientDraft(ingredient, state))
             : [createEmptyIngredient()];
@@ -343,7 +410,11 @@
             packageConversionMap: new Map(),
             recipeLibraryOpen: false,
             recipeLibrarySearch: "",
-            recipeLibrarySort: "newest"
+            recipeLibrarySort: "newest",
+            scopeSummary: null,
+            sellingPrice: "",
+            targetFoodCostPct: "",
+            statusTimer: null
         };
     }
 
@@ -351,13 +422,39 @@
         state.productMap = new Map(state.products.map((product) => [product.product_name, product]));
     }
 
-    function setStatus(elements, message = "", tone = "") {
+    function clearStatusTimer(elements, state = null) {
+        const timerId = state?.statusTimer ?? Number(elements.recipeStatusMessage?.dataset.timerId || 0);
+        if (timerId) {
+            window.clearTimeout(timerId);
+        }
+        if (state) {
+            state.statusTimer = null;
+        }
+        if (elements.recipeStatusMessage) {
+            elements.recipeStatusMessage.dataset.timerId = "";
+        }
+    }
+
+    function setStatus(elements, message = "", tone = "", state = null) {
         if (!elements.recipeStatusMessage) {
             return;
         }
+        clearStatusTimer(elements, state);
         elements.recipeStatusMessage.hidden = !message;
         elements.recipeStatusMessage.className = `recipe-status${tone ? ` is-${tone}` : ""}`;
         elements.recipeStatusMessage.textContent = message;
+        if (!message) {
+            return;
+        }
+        if (tone === "success" || tone === "danger" || tone === "info") {
+            const timerId = window.setTimeout(() => {
+                setStatus(elements, "", "", state);
+            }, tone === "info" ? 2500 : 3200);
+            if (state) {
+                state.statusTimer = timerId;
+            }
+            elements.recipeStatusMessage.dataset.timerId = String(timerId);
+        }
     }
 
     function resetCalculationView(elements) {
@@ -371,20 +468,130 @@
         if (elements.recipeBreakdownList) {
             elements.recipeBreakdownList.innerHTML = '<div class="decision-list-empty">Add ingredients and choose a pricing mode to see the recipe cost breakdown.</div>';
         }
+        renderPricingPanel(elements, {
+            calculation: null,
+            sellingPrice: "",
+            targetFoodCostPct: ""
+        });
+    }
+
+    function getPricingMetrics(state, elements = null) {
+        const calculation = state?.calculation || null;
+        const totalRecipeCost = Number(calculation?.total_recipe_cost || 0);
+        const costPerPortion = Number(calculation?.cost_per_portion || 0);
+        const sellingPriceValue = state?.sellingPrice ?? elements?.recipeSellingPriceInput?.value ?? "";
+        const targetFoodCostValue = state?.targetFoodCostPct ?? elements?.recipeTargetFoodCostInput?.value ?? "";
+        const sellingPrice = Number(sellingPriceValue || 0);
+        const targetFoodCostPct = Number(targetFoodCostValue || 0);
+        const hasSellingPrice = sellingPrice > 0;
+        const hasTargetFoodCost = targetFoodCostPct > 0;
+        const grossProfit = hasSellingPrice ? sellingPrice - costPerPortion : null;
+        const grossMarginPct = hasSellingPrice ? ((sellingPrice - costPerPortion) / sellingPrice) * 100 : null;
+        const foodCostPct = hasSellingPrice ? (costPerPortion / sellingPrice) * 100 : null;
+        const suggestedSellingPrice = hasTargetFoodCost ? costPerPortion / (targetFoodCostPct / 100) : null;
+
+        return {
+            totalRecipeCost,
+            costPerPortion,
+            grossProfit,
+            grossMarginPct,
+            foodCostPct,
+            suggestedSellingPrice
+        };
+    }
+
+    function renderPricingPanel(elements, state) {
+        syncPricingInputsFromElements(elements, state);
+        const liveSellingPrice = state?.sellingPrice ?? elements?.recipeSellingPriceInput?.value ?? "";
+        const liveTargetFoodCostPct = state?.targetFoodCostPct ?? elements?.recipeTargetFoodCostInput?.value ?? "";
+        const metrics = getPricingMetrics({
+            ...state,
+            sellingPrice: liveSellingPrice,
+            targetFoodCostPct: liveTargetFoodCostPct
+        }, elements);
+        if (elements.recipeSellingPriceInput && document.activeElement !== elements.recipeSellingPriceInput) {
+            elements.recipeSellingPriceInput.value = liveSellingPrice;
+        }
+        if (elements.recipeTargetFoodCostInput && document.activeElement !== elements.recipeTargetFoodCostInput) {
+            elements.recipeTargetFoodCostInput.value = liveTargetFoodCostPct;
+        }
+        if (elements.recipePricingTotalCost) {
+            elements.recipePricingTotalCost.textContent = formatCurrency(metrics.totalRecipeCost);
+        }
+        if (elements.recipePricingCostPerPortion) {
+            elements.recipePricingCostPerPortion.textContent = formatCurrency(metrics.costPerPortion);
+        }
+        if (elements.recipeGrossProfitValue) {
+            elements.recipeGrossProfitValue.textContent = metrics.grossProfit === null ? "--" : formatCurrency(metrics.grossProfit);
+        }
+        if (elements.recipeGrossMarginValue) {
+            elements.recipeGrossMarginValue.textContent = metrics.grossMarginPct === null ? "--" : formatPercent(metrics.grossMarginPct);
+        }
+        if (elements.recipeFoodCostValue) {
+            elements.recipeFoodCostValue.textContent = metrics.foodCostPct === null ? "--" : formatPercent(metrics.foodCostPct);
+        }
+        if (elements.recipeSuggestedPriceValue) {
+            elements.recipeSuggestedPriceValue.textContent = metrics.suggestedSellingPrice === null ? "--" : formatCurrency(metrics.suggestedSellingPrice);
+        }
+    }
+
+    function buildPricingSnapshot(state, elements = null) {
+        syncPricingInputsFromElements(elements, state);
+        const metrics = getPricingMetrics(state, elements);
+        return {
+            selling_price: Number((state?.sellingPrice ?? elements?.recipeSellingPriceInput?.value ?? "") || 0),
+            target_food_cost_pct: Number((state?.targetFoodCostPct ?? elements?.recipeTargetFoodCostInput?.value ?? "") || 0),
+            total_recipe_cost: Number(metrics.totalRecipeCost || 0),
+            cost_per_portion: Number(metrics.costPerPortion || 0),
+            gross_profit: metrics.grossProfit === null ? 0 : Number(metrics.grossProfit),
+            gross_margin_pct: metrics.grossMarginPct === null ? 0 : Number(metrics.grossMarginPct),
+            food_cost_pct: metrics.foodCostPct === null ? 0 : Number(metrics.foodCostPct),
+            suggested_selling_price: metrics.suggestedSellingPrice === null ? 0 : Number(metrics.suggestedSellingPrice)
+        };
     }
 
     function renderPricingModes(elements, state) {
         if (!elements.recipePricingModeSelect) {
             return;
         }
+        elements.recipePricingModeSelect.disabled = false;
         elements.recipePricingModeSelect.innerHTML = state.pricingModes.map((mode) => `
             <option value="${escapeHtml(mode.value)}">${escapeHtml(mode.label)}</option>
         `).join("");
         elements.recipePricingModeSelect.value = state.draft.pricing_mode || DEFAULT_PRICING_MODE;
     }
 
+    function renderScopeSummary(elements, state) {
+        if (elements.recipeDataScopeSelect) {
+            elements.recipeDataScopeSelect.value = state.dataScope || "current_upload";
+        }
+        if (!elements.recipeDataScopeSummary) {
+            return;
+        }
+        const summary = state.scopeSummary || {};
+        const rowCount = Number(summary.row_count || 0);
+        const productCount = Number(summary.product_count || 0);
+        const scopeLabel = summary.scope_label || "Current Upload";
+        elements.recipeDataScopeSummary.textContent = rowCount
+            ? `${scopeLabel} • ${productCount} products • ${rowCount} rows`
+            : `${scopeLabel} • No analyzed rows`;
+    }
+
     function getUnitsForProduct(state, productName) {
         return state.productMap.get(productName)?.units || [];
+    }
+
+    function renderScopeSummary(elements, state) {
+        if (!elements.recipeDataScopeSummary) {
+            return;
+        }
+        const summary = state.scopeSummary || {};
+        const rowCount = Number(summary.row_count || 0);
+        const productCount = Number(summary.product_count || 0);
+        const scopeLabel = summary.scope_label || "Current File";
+        elements.recipeDataScopeSummary.textContent = rowCount
+            ? `${scopeLabel} • ${productCount} products • ${rowCount} rows`
+            : `${scopeLabel} • No analyzed file yet`;
     }
 
     function getSourcePurchaseUnitForProduct(state, productName) {
@@ -402,6 +609,42 @@
         state.draft.ingredients[index].purchase_size = 1;
         state.draft.ingredients[index].purchase_base_unit = "";
         state.openProductDropdownIndex = null;
+    }
+
+    function clearInvalidIngredientBindings(state) {
+        const invalidProductNames = [];
+        state.draft.ingredients = (state.draft.ingredients || []).map((ingredient) => {
+            const normalizedIngredient = normalizeIngredientDraft(ingredient, state);
+            const productName = String(normalizedIngredient.product_name || "").trim();
+            if (!productName || state.productMap.has(productName)) {
+                return normalizedIngredient;
+            }
+            invalidProductNames.push(productName);
+            return {
+                ...normalizedIngredient,
+                product_name: "",
+                unit: "",
+                purchase_unit: "",
+                purchase_size: 1,
+                purchase_base_unit: ""
+            };
+        });
+        return invalidProductNames;
+    }
+
+    function applyDraftValidationFeedback(elements, invalidProductNames) {
+        if (!invalidProductNames.length) {
+            return;
+        }
+        const uniqueNames = Array.from(new Set(invalidProductNames));
+        const preview = uniqueNames.slice(0, 2).join(", ");
+        const remainder = uniqueNames.length > 2 ? ` and ${uniqueNames.length - 2} more` : "";
+        const verb = uniqueNames.length === 1 ? "is" : "are";
+        setStatus(
+            elements,
+            `${preview}${remainder} ${verb} no longer in the active analyzed dataset. Reselect the cleared ingredient row${uniqueNames.length === 1 ? "" : "s"}.`,
+            "info"
+        );
     }
 
     function getFilteredProducts(state, query) {
@@ -501,6 +744,8 @@
                 && normalizedIngredient.unit
                 && normalizedIngredient.purchase_unit !== normalizedIngredient.unit
             );
+            const conversionTargetUnit = normalizeUnit(normalizedIngredient.unit || purchaseBaseUnit || "unit");
+            const conversionMissing = showConversionBasis && Number(normalizedIngredient.purchase_size || 0) <= 0;
 
             return `
                 <div class="recipe-ingredient-row recipe-ingredient-grid${productDropdownOpen ? " is-product-open" : ""}" data-index="${index}">
@@ -543,34 +788,35 @@
                             ${unitOptions}
                         </select>
                         ${showConversionBasis ? `
-                            <div class="recipe-conversion-row">
-                                <span class="recipe-conversion-copy">1 ${escapeHtml(normalizedIngredient.purchase_unit || "unit")}</span>
-                                <span class="recipe-conversion-copy">=</span>
-                                <input
-                                    type="number"
-                                    min="0.0001"
-                                    step="0.01"
-                                    class="recipe-input recipe-conversion-input"
-                                    data-field="purchase_size"
-                                    data-index="${index}"
-                                    value="${escapeHtml(normalizedIngredient.purchase_size)}"
-                                    placeholder="0"
-                                    ${purchaseUnitType === "package" ? "" : "disabled"}
-                                >
-                                ${purchaseUnitType === "package" ? `
-                                    <select class="recipe-select recipe-conversion-unit-select" data-field="purchase_base_unit" data-index="${index}">
-                                        ${packageBaseOptions}
-                                    </select>
-                                ` : `
-                                    <span class="recipe-conversion-copy is-target-unit">${escapeHtml(purchaseBaseUnit || normalizedIngredient.unit || "unit")}</span>
-                                `}
-                                <span
-                                    class="recipe-conversion-info"
-                                    tabindex="0"
-                                    data-tooltip="Convert purchase unit to recipe usage unit"
-                                    aria-label="Convert purchase unit to recipe usage unit"
-                                >i</span>
+                            <div class="recipe-conversion-block">
+                                <div class="recipe-conversion-label">Conversion</div>
+                                <div class="recipe-conversion-row">
+                                    <div class="recipe-conversion-equation">
+                                        <span class="recipe-conversion-copy">1 ${escapeHtml(normalizedIngredient.purchase_unit || "unit")}</span>
+                                        <span class="recipe-conversion-copy">=</span>
+                                        <input
+                                            type="number"
+                                            min="0.0001"
+                                            step="0.01"
+                                            class="recipe-input recipe-conversion-input"
+                                            data-field="purchase_size"
+                                            data-index="${index}"
+                                            value="${escapeHtml(normalizedIngredient.purchase_size)}"
+                                            placeholder="0"
+                                        >
+                                        <span class="recipe-conversion-copy is-target-unit">${escapeHtml(conversionTargetUnit)}</span>
+                                    </div>
+                                    <span
+                                        class="recipe-conversion-info"
+                                        tabindex="0"
+                                        data-tooltip="Define how many ${escapeHtml(conversionTargetUnit)} are in 1 ${escapeHtml(normalizedIngredient.purchase_unit || "purchase unit")}."
+                                        aria-label="Define how many ${escapeHtml(conversionTargetUnit)} are in 1 ${escapeHtml(normalizedIngredient.purchase_unit || "purchase unit")}."
+                                    >i</span>
+                                </div>
                             </div>
+                        ` : ""}
+                        ${conversionMissing ? `
+                            <div class="recipe-unit-warning">Define how many ${escapeHtml(conversionTargetUnit)} are in 1 ${escapeHtml(normalizedIngredient.purchase_unit || "purchase unit")}.</div>
                         ` : ""}
                         ${hasMismatch ? `
                             <div class="recipe-unit-warning">Selected unit type does not match product type.</div>
@@ -603,13 +849,12 @@
             elements.openRecipeLibraryInlineButton.hidden = false;
         }
         elements.recipesList.innerHTML = getSortedRecipes(state.recipes, "newest").slice(0, 5).map((recipe) => {
-            const isActive = recipe.recipe_id === state.activeRecipeId;
             const updatedLabel = formatRecipeUpdatedAt(recipe.updated_at);
             return `
-                <div class="recipe-list-item-shell ${isActive ? "is-active" : ""}">
+                <div class="recipe-list-item-shell">
                     <button type="button" class="recipe-list-item" data-open-recipe="${escapeHtml(recipe.recipe_id)}">
                         <span class="recipe-list-name">${escapeHtml(recipe.name)}</span>
-                        <span class="recipe-list-meta">${Number(recipe.yield_portions || 0)} portion${Number(recipe.yield_portions || 0) === 1 ? "" : "s"} | Updated ${escapeHtml(updatedLabel)}</span>
+                        <span class="recipe-list-meta">${Number(recipe.yield_portions || 0)} portion${Number(recipe.yield_portions || 0) === 1 ? "" : "s"} | Updated ${escapeHtml(updatedLabel)} | Snapshot</span>
                     </button>
                     <button type="button" class="recipe-list-delete-btn" data-delete-recipe="${escapeHtml(recipe.recipe_id)}" aria-label="Delete ${escapeHtml(recipe.name)} recipe">x</button>
                 </div>
@@ -627,6 +872,87 @@
                 ` : ""}
             `;
         }).join("");
+    }
+
+    function renderRecipeLibraryDetail(elements, state, recipes) {
+        if (!elements.recipeLibraryDetail) {
+            return;
+        }
+
+        const selectedRecipe = recipes.find((recipe) => recipe.recipe_id === state.activeRecipeId)
+            || recipes[0]
+            || null;
+
+        if (!selectedRecipe) {
+            elements.recipeLibraryDetail.innerHTML = `
+                <div class="recipes-library-detail-empty">
+                    <div class="recipes-library-empty-title">No snapshot selected</div>
+                    <div class="recipes-library-empty-copy">Choose a saved recipe to review its archived snapshot details.</div>
+                </div>
+            `;
+            return;
+        }
+
+        state.activeRecipeId = selectedRecipe.recipe_id;
+        const ingredients = Array.isArray(selectedRecipe.ingredients) ? selectedRecipe.ingredients : [];
+        elements.recipeLibraryDetail.innerHTML = `
+            <div class="recipes-library-detail-card">
+                <div class="panel-label">Archived Snapshot</div>
+                <h3 class="recipes-library-detail-title">${escapeHtml(selectedRecipe.name || "Untitled recipe")}</h3>
+                <div class="recipes-library-detail-meta">Saved ${escapeHtml(formatRecipeUpdatedAt(selectedRecipe.updated_at))} • ${Number(selectedRecipe.yield_portions || 0)} portion${Number(selectedRecipe.yield_portions || 0) === 1 ? "" : "s"}</div>
+                <div class="recipes-library-detail-kpis">
+                    <div class="recipes-library-detail-kpi">
+                        <span>Saved Total Cost</span>
+                        <strong>${formatCurrency(selectedRecipe.total_recipe_cost || 0)}</strong>
+                    </div>
+                    <div class="recipes-library-detail-kpi">
+                        <span>Saved Cost / Portion</span>
+                        <strong>${formatCurrency(selectedRecipe.cost_per_portion || 0)}</strong>
+                    </div>
+                </div>
+                <div class="recipes-library-detail-section">
+                    <div class="panel-label">Pricing Snapshot</div>
+                    <div class="recipes-library-detail-pricing-grid">
+                        <div class="recipes-library-detail-row">
+                            <strong>Selling Price</strong>
+                            <span>${formatOptionalCurrency(selectedRecipe.selling_price)}</span>
+                        </div>
+                        <div class="recipes-library-detail-row">
+                            <strong>Gross Profit</strong>
+                            <span>${formatOptionalCurrency(selectedRecipe.gross_profit)}</span>
+                        </div>
+                        <div class="recipes-library-detail-row">
+                            <strong>Gross Margin %</strong>
+                            <span>${formatOptionalPercent(selectedRecipe.gross_margin_pct)}</span>
+                        </div>
+                        <div class="recipes-library-detail-row">
+                            <strong>Food Cost %</strong>
+                            <span>${formatOptionalPercent(selectedRecipe.food_cost_pct)}</span>
+                        </div>
+                        <div class="recipes-library-detail-row">
+                            <strong>Target Food Cost %</strong>
+                            <span>${formatOptionalPercent(selectedRecipe.target_food_cost_pct)}</span>
+                        </div>
+                        <div class="recipes-library-detail-row">
+                            <strong>Suggested Selling Price</strong>
+                            <span>${formatOptionalCurrency(selectedRecipe.suggested_selling_price)}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="recipes-library-detail-section">
+                    <div class="panel-label">Ingredients</div>
+                    <div class="recipes-library-detail-list">
+                        ${ingredients.length ? ingredients.map((ingredient) => `
+                            <div class="recipes-library-detail-row">
+                                <strong>${escapeHtml(ingredient.product_name || "Unnamed ingredient")}</strong>
+                                <span>${Number(ingredient.quantity || 0)} ${escapeHtml(ingredient.unit || "")}</span>
+                            </div>
+                        `).join("") : '<div class="recipes-library-empty-copy">No archived ingredients saved for this recipe.</div>'}
+                    </div>
+                </div>
+                <div class="recipes-library-detail-note">Archived recipes are view-only in V1. Use the live builder to calculate a fresh version from the current uploaded file.</div>
+            </div>
+        `;
     }
 
     function renderRecipeLibrary(elements, state) {
@@ -656,27 +982,25 @@
                     : "No ingredients yet";
                 const updatedLabel = formatRecipeUpdatedAt(recipe.updated_at);
                 return `
-                    <div class="recipes-library-row-shell ${isActive ? "is-active" : ""}">
-                        <button type="button" class="recipes-library-row" data-open-library-recipe="${escapeHtml(recipe.recipe_id)}">
+                    <div class="recipes-library-row-shell ${isActive ? "is-active" : ""}" data-open-library-recipe="${escapeHtml(recipe.recipe_id)}" tabindex="0" role="button" aria-label="Open snapshot for ${escapeHtml(recipe.name || "recipe")}">
+                        <div class="recipes-library-row">
                             <div class="recipes-library-main-copy">
                                 <div class="recipes-library-name">${escapeHtml(recipe.name || "Untitled recipe")}</div>
                                 <div class="recipes-library-meta">Updated ${escapeHtml(updatedLabel)} | ${ingredientCount} ingredient${ingredientCount === 1 ? "" : "s"}</div>
-                                <div class="recipes-library-preview">Quick preview: ${escapeHtml(previewIngredient)} | Last cost ${formatCurrency(recipe.total_recipe_cost || 0)}</div>
+                                <div class="recipes-library-preview">Quick preview: ${escapeHtml(previewIngredient)} | Sell ${formatOptionalCurrency(recipe.selling_price)} | Last cost ${formatCurrency(recipe.total_recipe_cost || 0)}</div>
                             </div>
-                            <div class="recipes-library-metrics">
-                                <div class="recipes-library-metric">
-                                    <span class="recipes-library-metric-label">Per Portion</span>
-                                    <strong>${formatCurrency(recipe.cost_per_portion || 0)}</strong>
-                                </div>
-                                <div class="recipes-library-metric total">
-                                    <span class="recipes-library-metric-label">Total Cost</span>
-                                    <strong>${formatCurrency(recipe.total_recipe_cost || 0)}</strong>
-                                </div>
-                            </div>
-                        </button>
-                        <button type="button" class="secondary-btn recipes-library-open-btn" data-open-library-recipe="${escapeHtml(recipe.recipe_id)}">Open</button>
-                        <button type="button" class="secondary-btn recipes-library-edit-btn" data-open-library-recipe="${escapeHtml(recipe.recipe_id)}">Edit</button>
-                        <button type="button" class="recipe-list-delete-btn recipes-library-delete-btn" data-delete-recipe="${escapeHtml(recipe.recipe_id)}" aria-label="Delete ${escapeHtml(recipe.name || "recipe")}">x</button>
+                        </div>
+                        <div class="recipes-library-metric">
+                            <span class="recipes-library-metric-label">Per Portion</span>
+                            <strong>${formatCurrency(recipe.cost_per_portion || 0)}</strong>
+                        </div>
+                        <div class="recipes-library-metric total">
+                            <span class="recipes-library-metric-label">Total Cost</span>
+                            <strong>${formatCurrency(recipe.total_recipe_cost || 0)}</strong>
+                        </div>
+                        <div class="recipes-library-actions">
+                            <button type="button" class="recipe-list-delete-btn recipes-library-delete-btn" data-delete-recipe="${escapeHtml(recipe.recipe_id)}" aria-label="Delete ${escapeHtml(recipe.name || "recipe")}">x</button>
+                        </div>
                     </div>
                     ${state.deleteConfirmVisible && state.deleteTargetRecipeId === recipe.recipe_id ? `
                         <div class="recipe-delete-confirm recipe-library-delete-confirm">
@@ -692,13 +1016,14 @@
                     ` : ""}
                 `;
             }).join("")
-            : `
-                <div class="recipes-library-empty-state">
-                    <div class="recipes-library-empty-title">${state.recipes.length ? "No matching recipes" : "No recipes yet"}</div>
-                    <div class="recipes-library-empty-copy">${state.recipes.length ? "Try a different recipe name or sort mode." : "Create your first recipe to start tracking costs."}</div>
-                    ${state.recipes.length ? "" : '<button type="button" class="action-btn" id="recipeLibraryEmptyCreateButton">Create Recipe</button>'}
-                </div>
-            `;
+              : `
+                  <div class="recipes-library-empty-state">
+                      <div class="recipes-library-empty-title">${state.recipes.length ? "No matching recipes" : "No recipes yet"}</div>
+                      <div class="recipes-library-empty-copy">${state.recipes.length ? "Try a different recipe name or sort mode." : "Create your first recipe to start tracking costs."}</div>
+                      ${state.recipes.length ? "" : '<button type="button" class="action-btn" id="recipeLibraryEmptyCreateButton">Create Recipe</button>'}
+                  </div>
+              `;
+        renderRecipeLibraryDetail(elements, state, recipes);
     }
 
     function renderRecipeCollections(elements, state) {
@@ -711,15 +1036,16 @@
             state.draft.ingredients = [createEmptyIngredient()];
         }
         if (elements.recipeEditorTitle) {
-            elements.recipeEditorTitle.textContent = state.activeRecipeId ? "Edit saved recipe" : "Create a recipe";
-            elements.recipeEditorTitle.classList.toggle("is-editing", Boolean(state.activeRecipeId));
+            elements.recipeEditorTitle.textContent = "Create a recipe";
+            elements.recipeEditorTitle.classList.remove("is-editing");
         }
         if (elements.recipeNameInput) elements.recipeNameInput.value = state.draft.name || "";
         if (elements.recipeYieldInput) elements.recipeYieldInput.value = state.draft.yield_portions || 1;
         renderPricingModes(elements, state);
         renderIngredients(elements, state);
+        renderPricingPanel(elements, state);
         if (elements.saveRecipeButton) {
-            elements.saveRecipeButton.textContent = state.activeRecipeId ? "Update Recipe" : "Save Recipe";
+            elements.saveRecipeButton.textContent = "Save Recipe";
         }
     }
 
@@ -728,12 +1054,15 @@
         state.deleteConfirmVisible = false;
         state.deleteTargetRecipeId = null;
         state.openProductDropdownIndex = null;
+        state.recipeLibraryOpen = false;
         state.draft = createEmptyRecipe();
         state.calculation = null;
+        state.sellingPrice = "";
+        state.targetFoodCostPct = "";
         renderRecipeCollections(elements, state);
         renderEditor(elements, state);
         renderCalculation(elements, null);
-        setStatus(elements, statusMessage, "info");
+        setStatus(elements, statusMessage, "info", state);
     }
 
     function renderCalculation(elements, calculation) {
@@ -774,8 +1103,13 @@
                         <div class="decision-item-value negative">${formatCurrency(item.ingredient_cost)}</div>
                     </article>
                 `).join("")
-                : '<div class="decision-list-empty">Add ingredients and choose a pricing mode to see the recipe cost breakdown.</div>';
+                  : '<div class="decision-list-empty">Add ingredients and choose a pricing mode to see the recipe cost breakdown.</div>';
         }
+        renderPricingPanel(elements, {
+            calculation,
+            sellingPrice: elements.recipeSellingPriceInput?.value ?? "",
+            targetFoodCostPct: elements.recipeTargetFoodCostInput?.value ?? ""
+        });
     }
 
     function getFilledIngredients(state) {
@@ -784,7 +1118,7 @@
             .filter((ingredient) => ingredient.product_name || ingredient.unit || ingredient.purchase_unit || ingredient.quantity);
     }
 
-    function buildPayload(state, { requireComplete = false } = {}) {
+    function buildPayload(state, { requireComplete = false, elements = null } = {}) {
         const filledIngredients = getFilledIngredients(state);
         const mismatchedIngredient = filledIngredients.find((ingredient) => (
             ingredient.product_name
@@ -813,11 +1147,20 @@
             return null;
         }
 
+        const pricingSnapshot = buildPricingSnapshot(state, elements);
         return {
             recipe_id: state.draft.recipe_id,
             name: String(state.draft.name || "").trim(),
             yield_portions: Number(state.draft.yield_portions || 0),
             pricing_mode: state.draft.pricing_mode || DEFAULT_PRICING_MODE,
+            selling_price: pricingSnapshot.selling_price,
+            target_food_cost_pct: pricingSnapshot.target_food_cost_pct,
+            total_recipe_cost: pricingSnapshot.total_recipe_cost,
+            cost_per_portion: pricingSnapshot.cost_per_portion,
+            gross_profit: pricingSnapshot.gross_profit,
+            gross_margin_pct: pricingSnapshot.gross_margin_pct,
+            food_cost_pct: pricingSnapshot.food_cost_pct,
+            suggested_selling_price: pricingSnapshot.suggested_selling_price,
             ingredients: completeIngredients.map((ingredient) => ({
                 product_name: ingredient.product_name,
                 quantity: Number(ingredient.quantity),
@@ -846,53 +1189,64 @@
 
     async function loadBootstrap(elements, state) {
         if (!hasAnalysis(elements)) {
+            const data = await fetchJson("/recipes/bootstrap");
             state.products = [];
             syncProductMap(state);
             state.packageConversionMap = new Map();
-            state.recipes = [];
+            state.pricingModes = data.pricing_modes || [];
+            state.recipes = (data.recipes || []).map((recipe) => normalizeRecipeDraft(recipe, state));
             state.activeRecipeId = null;
+            state.deleteConfirmVisible = false;
+            state.deleteTargetRecipeId = null;
+            state.isDeleting = false;
+            state.recipeLibraryOpen = false;
+            state.openProductDropdownIndex = null;
             state.draft = createEmptyRecipe();
             state.calculation = null;
+            state.sellingPrice = "";
+            state.targetFoodCostPct = "";
+            state.scopeSummary = data.scope_summary || null;
+            state.isLoaded = true;
+            renderScopeSummary(elements, state);
             renderRecipeCollections(elements, state);
             renderEditor(elements, state);
-            resetCalculationView(elements);
+            renderCalculation(elements, null);
             return;
         }
 
         const data = await fetchJson("/recipes/bootstrap");
         state.products = data.products || [];
         state.pricingModes = data.pricing_modes || [];
+        state.scopeSummary = data.scope_summary || null;
         state.packageConversionMap = new Map();
         syncProductMap(state);
         state.recipes = (data.recipes || []).map((recipe) => normalizeRecipeDraft(recipe, state));
         state.draft = normalizeRecipeDraft(state.draft, state);
+        const invalidDraftProducts = clearInvalidIngredientBindings(state);
         state.isLoaded = true;
+        renderScopeSummary(elements, state);
         renderRecipeCollections(elements, state);
         renderEditor(elements, state);
-
-        if (state.activeRecipeId) {
-            const savedRecipe = state.recipes.find((recipe) => recipe.recipe_id === state.activeRecipeId);
-            if (savedRecipe) {
-                state.draft = normalizeRecipeDraft(savedRecipe, state);
-                renderEditor(elements, state);
-            }
-        }
+        applyDraftValidationFeedback(elements, invalidDraftProducts);
     }
 
     async function calculateRecipe(elements, state, { quiet = false } = {}) {
         if (!hasAnalysis(elements)) {
+            renderPricingPanel(elements, state);
             return;
         }
 
-        const payload = buildPayload(state);
+        syncPricingInputsFromElements(elements, state);
+        const payload = buildPayload(state, { elements });
         if (!payload) {
             state.calculation = null;
             renderCalculation(elements, null);
             if (!quiet) {
-                setStatus(elements, "Add at least one complete ingredient row to calculate recipe cost.", "info");
+                setStatus(elements, "Add at least one complete ingredient row to calculate recipe cost.", "info", state);
             } else if (elements.recipeStatusMessage?.classList.contains("is-error")) {
-                setStatus(elements);
+                setStatus(elements, "", "", state);
             }
+            renderPricingPanel(elements, state);
             return;
         }
 
@@ -901,18 +1255,18 @@
                 method: "POST",
                 body: JSON.stringify(payload)
             });
-            state.calculation = data.calculation;
-            renderCalculation(elements, state.calculation);
+              state.calculation = data.calculation;
+              renderCalculation(elements, state.calculation);
             if (!quiet) {
-                setStatus(elements, "Recipe costs updated.", "info");
+                setStatus(elements, "Recipe costs updated.", "info", state);
             } else if (elements.recipeStatusMessage?.classList.contains("is-error")) {
-                setStatus(elements);
+                setStatus(elements, "", "", state);
             }
-        } catch (error) {
-            state.calculation = null;
-            renderCalculation(elements, null);
-            setStatus(elements, error.message, "error");
-        }
+          } catch (error) {
+              state.calculation = null;
+              renderCalculation(elements, null);
+              setStatus(elements, error.message, "error", state);
+          }
     }
 
     function scheduleCalculation(elements, state) {
@@ -930,12 +1284,9 @@
         state.activeRecipeId = recipeId;
         state.deleteConfirmVisible = false;
         state.deleteTargetRecipeId = null;
-        state.openProductDropdownIndex = null;
-        state.draft = normalizeRecipeDraft(recipe, state);
+        state.recipeLibraryOpen = true;
         renderRecipeCollections(elements, state);
-        renderEditor(elements, state);
-        setStatus(elements, `Opened recipe: ${recipe.name}`, "info");
-        calculateRecipe(elements, state, { quiet: true });
+        setStatus(elements, `Viewing archived recipe: ${recipe.name}`, "info", state);
     }
 
     function resetDraftAfterDelete(elements, state) {
@@ -945,6 +1296,8 @@
         state.openProductDropdownIndex = null;
         state.draft = createEmptyRecipe();
         state.calculation = null;
+        state.sellingPrice = "";
+        state.targetFoodCostPct = "";
         renderRecipeCollections(elements, state);
         renderEditor(elements, state);
         renderCalculation(elements, null);
@@ -957,14 +1310,15 @@
 
         let payload;
         try {
-            payload = buildPayload(state, { requireComplete: true });
+            syncPricingInputsFromElements(elements, state);
+            payload = buildPayload(state, { requireComplete: true, elements });
         } catch (error) {
-            setStatus(elements, error.message, "error");
+            setStatus(elements, error.message, "error", state);
             return;
         }
 
         if (!payload) {
-            setStatus(elements, "Add ingredients before saving the recipe.", "error");
+            setStatus(elements, "Add ingredients before saving the recipe.", "error", state);
             return;
         }
 
@@ -977,22 +1331,24 @@
                 body: JSON.stringify(payload)
             });
             state.recipes = data.recipes || [];
-            state.activeRecipeId = data.recipe?.recipe_id || state.activeRecipeId;
+            state.activeRecipeId = data.recipe?.recipe_id || null;
             state.deleteConfirmVisible = false;
             state.deleteTargetRecipeId = null;
-            state.draft = normalizeRecipeDraft(data.recipe || state.draft, state);
-            state.calculation = data.calculation || null;
+            state.draft = createEmptyRecipe();
+            state.calculation = null;
+            state.sellingPrice = "";
+            state.targetFoodCostPct = "";
             renderRecipeCollections(elements, state);
             renderEditor(elements, state);
-            renderCalculation(elements, state.calculation);
-            setStatus(elements, data.message || "Recipe saved successfully", "success");
+            renderCalculation(elements, null);
+            setStatus(elements, `${data.message || "Recipe saved successfully"}. Open View All Recipes to review the archived snapshot.`, "success", state);
         } catch (error) {
-            setStatus(elements, error.message, "error");
+            setStatus(elements, error.message, "error", state);
         }
     }
 
     async function deleteRecipe(elements, state, recipeId = state.deleteTargetRecipeId || state.activeRecipeId) {
-        if (!hasAnalysis(elements) || !recipeId || state.isDeleting) {
+        if (!recipeId || state.isDeleting) {
             return;
         }
 
@@ -1013,10 +1369,10 @@
                 state.deleteTargetRecipeId = null;
                 renderRecipeCollections(elements, state);
             }
-            setStatus(elements, data.message || "Recipe deleted", "danger");
+            setStatus(elements, data.message || "Recipe deleted", "danger", state);
         } catch (error) {
             state.deleteConfirmVisible = true;
-            setStatus(elements, error.message, "error");
+            setStatus(elements, error.message, "error", state);
         } finally {
             state.isDeleting = false;
             renderRecipeCollections(elements, state);
@@ -1052,6 +1408,38 @@
             elements.recipePricingModeSelect.addEventListener("change", (event) => {
                 state.draft.pricing_mode = event.target.value;
                 scheduleCalculation(elements, state);
+            });
+        }
+
+        if (elements.recipeSellingPriceInput && elements.recipeSellingPriceInput.dataset.bound !== "true") {
+            elements.recipeSellingPriceInput.dataset.bound = "true";
+            elements.recipeSellingPriceInput.addEventListener("input", (event) => {
+                state.sellingPrice = event.target.value;
+                renderPricingPanel(elements, state);
+            });
+        }
+
+        if (elements.recipeTargetFoodCostInput && elements.recipeTargetFoodCostInput.dataset.bound !== "true") {
+            elements.recipeTargetFoodCostInput.dataset.bound = "true";
+            elements.recipeTargetFoodCostInput.addEventListener("input", (event) => {
+                state.targetFoodCostPct = event.target.value;
+                renderPricingPanel(elements, state);
+            });
+        }
+
+        if (elements.recipeDataScopeSelect && elements.recipeDataScopeSelect.dataset.bound !== "true") {
+            elements.recipeDataScopeSelect.dataset.bound = "true";
+            elements.recipeDataScopeSelect.value = state.dataScope || "current_upload";
+            elements.recipeDataScopeSelect.addEventListener("change", async (event) => {
+                state.dataScope = event.target.value || "current_upload";
+                writeSharedDataScope(state.dataScope);
+                try {
+                    await loadBootstrap(elements, state);
+                    await calculateRecipe(elements, state, { quiet: true });
+                    setStatus(elements);
+                } catch (error) {
+                    setStatus(elements, error.message, "error");
+                }
             });
         }
 
@@ -1229,6 +1617,13 @@
                     state.draft.ingredients[index].unit = currentUnit && compatibleUsageType
                         ? currentUnit
                         : normalizeUnit(state.draft.ingredients[index].purchase_base_unit || state.draft.ingredients[index].purchase_unit || "");
+                    if (
+                        state.draft.ingredients[index].purchase_unit
+                        && state.draft.ingredients[index].unit
+                        && state.draft.ingredients[index].purchase_unit !== state.draft.ingredients[index].unit
+                    ) {
+                        state.draft.ingredients[index].purchase_base_unit = state.draft.ingredients[index].unit;
+                    }
                     state.draft.ingredients[index].purchase_size = inferPurchaseSize(
                         state.draft.ingredients[index].purchase_unit,
                         state.draft.ingredients[index].purchase_base_unit || state.draft.ingredients[index].unit
@@ -1252,15 +1647,19 @@
                         state,
                         state.draft.ingredients[index].product_name
                     ) || normalizeUnit(state.draft.ingredients[index].purchase_unit);
-                    state.draft.ingredients[index].purchase_base_unit = resolvePurchaseBaseUnit(
-                        state.draft.ingredients[index].purchase_unit,
-                        state.draft.ingredients[index].unit,
-                        state.draft.ingredients[index].purchase_base_unit
-                    );
-                    state.draft.ingredients[index].purchase_size = inferPurchaseSize(
-                        state.draft.ingredients[index].purchase_unit,
-                        state.draft.ingredients[index].purchase_base_unit || state.draft.ingredients[index].unit
-                    );
+                    state.draft.ingredients[index].purchase_base_unit = state.draft.ingredients[index].purchase_unit !== state.draft.ingredients[index].unit
+                        ? state.draft.ingredients[index].unit
+                        : resolvePurchaseBaseUnit(
+                            state.draft.ingredients[index].purchase_unit,
+                            state.draft.ingredients[index].unit,
+                            state.draft.ingredients[index].purchase_base_unit
+                        );
+                    state.draft.ingredients[index].purchase_size = state.draft.ingredients[index].purchase_unit === state.draft.ingredients[index].unit
+                        ? 1
+                        : inferPurchaseSize(
+                            state.draft.ingredients[index].purchase_unit,
+                            state.draft.ingredients[index].purchase_base_unit || state.draft.ingredients[index].unit
+                        );
                     rememberPackageConversion(
                         state,
                         state.draft.ingredients[index].product_name,
@@ -1296,7 +1695,7 @@
                     state.deleteConfirmVisible = true;
                     state.deleteTargetRecipeId = deleteButton.dataset.deleteRecipe || null;
                     renderRecipeCollections(elements, state);
-                    setStatus(elements);
+                    setStatus(elements, "", "", state);
                     return;
                 }
 
@@ -1323,6 +1722,7 @@
 
         const openLibrary = () => {
             state.recipeLibraryOpen = true;
+            setStatus(elements, "", "", state);
             renderRecipeLibrary(elements, state);
             window.setTimeout(() => {
                 elements.recipeLibrarySearchInput?.focus();
@@ -1333,13 +1733,9 @@
             state.recipeLibraryOpen = false;
             state.deleteConfirmVisible = false;
             state.deleteTargetRecipeId = null;
+            setStatus(elements, "", "", state);
             renderRecipeLibrary(elements, state);
         };
-
-        if (elements.openRecipeLibraryButton && elements.openRecipeLibraryButton.dataset.bound !== "true") {
-            elements.openRecipeLibraryButton.dataset.bound = "true";
-            elements.openRecipeLibraryButton.addEventListener("click", openLibrary);
-        }
 
         if (elements.openRecipeLibraryInlineButton && elements.openRecipeLibraryInlineButton.dataset.bound !== "true") {
             elements.openRecipeLibraryInlineButton.dataset.bound = "true";
@@ -1418,8 +1814,19 @@
                 if (!openButton) {
                     return;
                 }
-                closeLibrary();
                 openRecipe(elements, state, openButton.dataset.openLibraryRecipe || "");
+            });
+
+            elements.recipeLibraryList.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter" && event.key !== " ") {
+                    return;
+                }
+                const openTarget = event.target.closest("[data-open-library-recipe]");
+                if (!openTarget || event.target.closest("[data-delete-recipe]")) {
+                    return;
+                }
+                event.preventDefault();
+                openRecipe(elements, state, openTarget.dataset.openLibraryRecipe || "");
             });
         }
 
@@ -1446,6 +1853,7 @@
         }
 
         const state = createState();
+        renderScopeSummary(elements, state);
         renderRecipeCollections(elements, state);
         renderEditor(elements, state);
         renderCalculation(elements, null);
@@ -1453,22 +1861,30 @@
 
         const refreshBootstrap = async () => {
             if (!hasAnalysis(elements)) {
-                state.products = [];
-                syncProductMap(state);
-                state.packageConversionMap = new Map();
-                state.recipes = [];
-                state.activeRecipeId = null;
-                state.deleteConfirmVisible = false;
-                state.deleteTargetRecipeId = null;
-                state.isDeleting = false;
-                state.recipeLibraryOpen = false;
-                state.openProductDropdownIndex = null;
-                state.draft = createEmptyRecipe();
-                state.calculation = null;
-                renderRecipeCollections(elements, state);
-                renderEditor(elements, state);
-                renderCalculation(elements, null);
-                setStatus(elements);
+                try {
+                    const data = await fetchJson("/recipes/bootstrap");
+                    state.products = [];
+                    syncProductMap(state);
+                    state.packageConversionMap = new Map();
+                    state.pricingModes = data.pricing_modes || [];
+                    state.recipes = (data.recipes || []).map((recipe) => normalizeRecipeDraft(recipe, state));
+                    state.activeRecipeId = null;
+                    state.deleteConfirmVisible = false;
+                    state.deleteTargetRecipeId = null;
+                    state.isDeleting = false;
+                    state.recipeLibraryOpen = false;
+                    state.openProductDropdownIndex = null;
+                    state.draft = createEmptyRecipe();
+                    state.calculation = null;
+                    state.scopeSummary = data.scope_summary || null;
+                    renderScopeSummary(elements, state);
+                    renderRecipeCollections(elements, state);
+                    renderEditor(elements, state);
+                    renderCalculation(elements, null);
+                    setStatus(elements);
+                } catch (error) {
+                    setStatus(elements, error.message, "error");
+                }
                 return;
             }
             try {
@@ -1481,6 +1897,40 @@
         };
 
         await refreshBootstrap();
+        window.PriceAnalyzerRecipes = {
+            reloadSavedRecipes: refreshBootstrap
+        };
+
+        window.addEventListener("storage", async (event) => {
+            if (event.key !== SHARED_DATA_SCOPE_KEY) {
+                return;
+            }
+            const nextScope = readSharedDataScope();
+            if (nextScope === state.dataScope) {
+                return;
+            }
+            state.dataScope = nextScope;
+            try {
+                await loadBootstrap(elements, state);
+                await calculateRecipe(elements, state, { quiet: true });
+            } catch (error) {
+                setStatus(elements, error.message, "error");
+            }
+        });
+
+        window.addEventListener("shared-analysis-context-updated", async () => {
+            state.dataScope = readSharedDataScope();
+            try {
+                await loadBootstrap(elements, state);
+                await calculateRecipe(elements, state, { quiet: true });
+            } catch (error) {
+                setStatus(elements, error.message, "error");
+            }
+        });
+
+        window.addEventListener("workspace-reset-completed", async () => {
+            await refreshBootstrap();
+        });
 
         const observer = new MutationObserver(() => {
             refreshBootstrap();
