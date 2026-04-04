@@ -5,9 +5,9 @@
         "Product Name": "Choose the product, item, material, or description column.",
         "Supplier": "Choose the supplier, vendor, company, or seller column.",
         "Unit": "Choose the purchase unit, UOM, pack, or package column.",
-        "Quantity": "Choose the quoted quantity, qty, amount, or ordered quantity column.",
+        "Quantity": "Choose the quantity, qty, amount, or ordered quantity column.",
         "Unit Price": "Choose the unit price, price, cost, or rate column.",
-        "Date": "Choose the quote, purchase, invoice, or transaction date column.",
+        "Date": "Choose the price, purchase, invoice, or transaction date column.",
         "Currency": "Optional. Use this when the file includes a currency code like USD or EUR.",
         "Delivery Time": "Optional. Use this for lead time or delivery timing.",
         "Payment Terms": "Optional. Use this for Net 30, Net 45, or similar terms.",
@@ -357,7 +357,7 @@
     function getHistorySortIndicator(state, columnKey) {
         const currentSort = normalizeHistorySort(state.historySort);
         if (currentSort.key !== columnKey || !currentSort.direction) return "";
-        return currentSort.direction === "asc" ? " ↑" : " ↓";
+        return currentSort.direction === "asc" ? " ^" : " v";
     }
 
     function getHistorySortValue(row, key) {
@@ -409,7 +409,7 @@
     function getHistorySortIndicator(state, columnKey) {
         const currentSort = normalizeHistorySort(state.historySort);
         if (currentSort.key !== columnKey || !currentSort.direction) return "";
-        return currentSort.direction === "asc" ? " ↑" : " ↓";
+        return currentSort.direction === "asc" ? " ^" : " v";
     }
 
     function getHistorySortValue(row, key) {
@@ -438,11 +438,16 @@
     }
 
     function getHistoryDisplayRows(state, rows) {
+        const memo = getHistoryMemo(state);
         const currentSort = normalizeHistorySort(state.historySort);
         if (!currentSort.key || !currentSort.direction) {
             return rows;
         }
-        return rows
+        const displayKey = `${currentSort.key}|${currentSort.direction}`;
+        if (memo.displayRowsRef === rows && memo.displayKey === displayKey && Array.isArray(memo.displayRows)) {
+            return memo.displayRows;
+        }
+        const displayRows = rows
             .map((row, index) => ({ row, index }))
             .sort((left, right) => {
                 const comparison = compareHistorySortRows(left.row, right.row, currentSort.key, currentSort.direction);
@@ -450,6 +455,10 @@
                 return left.index - right.index;
             })
             .map((item) => item.row);
+        memo.displayRowsRef = rows;
+        memo.displayKey = displayKey;
+        memo.displayRows = displayRows;
+        return displayRows;
     }
 
     function getHistorySeriesKey(productName, unit) {
@@ -553,13 +562,25 @@
         if (!rows.length) {
             return {
                 latestUnitPrice: null,
+                latestUnitPriceSupplier: "",
+                latestUnitPriceDate: "",
+                earliestUnitPrice: null,
+                earliestUnitPriceSupplier: "",
+                earliestUnitPriceDate: "",
                 lowestUnitPrice: null,
+                lowestUnitPriceSupplier: "",
+                lowestUnitPriceDate: "",
                 highestUnitPrice: null,
+                highestUnitPriceSupplier: "",
+                highestUnitPriceDate: "",
+                currentVsBestUnitPrice: null,
+                currentVsBestLabel: "",
                 netChange: null,
                 netChangePercent: null,
                 averageUnitPrice: null,
                 movementCount: 0,
                 supplierCount: 0,
+                supplierNames: [],
                 firstDate: "",
                 latestDate: ""
             };
@@ -572,19 +593,43 @@
         const first = sortedRows[0];
         const latest = sortedRows[sortedRows.length - 1];
         const lowestUnitPrice = prices.length ? Math.min(...prices) : null;
+        const lowestPriceRow = lowestUnitPrice == null
+            ? null
+            : [...sortedRows].reverse().find((row) => Number(row.unitPrice) === lowestUnitPrice) || null;
         const highestUnitPrice = prices.length ? Math.max(...prices) : null;
+        const highestPriceRow = highestUnitPrice == null
+            ? null
+            : [...sortedRows].reverse().find((row) => Number(row.unitPrice) === highestUnitPrice) || null;
         const averageUnitPrice = prices.length ? prices.reduce((sum, value) => sum + value, 0) / prices.length : null;
         const netChange = Number.isFinite(first.unitPrice) && Number.isFinite(latest.unitPrice) ? latest.unitPrice - first.unitPrice : null;
         const netChangePercent = netChange != null && first.unitPrice ? (netChange / first.unitPrice) * 100 : null;
+        const currentVsBestUnitPrice = latest && lowestPriceRow && Number.isFinite(latest.unitPrice) && Number.isFinite(lowestPriceRow.unitPrice)
+            ? Math.max(Number(latest.unitPrice) - Number(lowestPriceRow.unitPrice), 0)
+            : null;
+        const supplierNames = Array.from(new Set(sortedRows.map((row) => row.supplier).filter(Boolean)));
         return {
             latestUnitPrice: latest.unitPrice,
+            latestUnitPriceSupplier: latest.supplier || "",
+            latestUnitPriceDate: formatDate(latest.quoteDate || latest.createdAt),
+            earliestUnitPrice: first.unitPrice,
+            earliestUnitPriceSupplier: first.supplier || "",
+            earliestUnitPriceDate: formatDate(first.quoteDate || first.createdAt),
             lowestUnitPrice,
+            lowestUnitPriceSupplier: lowestPriceRow?.supplier || "",
+            lowestUnitPriceDate: lowestPriceRow ? formatDate(lowestPriceRow.quoteDate || lowestPriceRow.createdAt) : "",
             highestUnitPrice,
+            highestUnitPriceSupplier: highestPriceRow?.supplier || "",
+            highestUnitPriceDate: highestPriceRow ? formatDate(highestPriceRow.quoteDate || highestPriceRow.createdAt) : "",
+            currentVsBestUnitPrice,
+            currentVsBestLabel: currentVsBestUnitPrice === 0
+                ? "Matches best recorded price"
+                : `${latest.supplier || "Current supplier"} above best recorded price`,
             netChange,
             netChangePercent,
             averageUnitPrice,
             movementCount: sortedRows.length,
-            supplierCount: new Set(sortedRows.map((row) => row.supplier).filter(Boolean)).size,
+            supplierCount: supplierNames.length,
+            supplierNames,
             firstDate: formatDate(first.quoteDate || first.createdAt),
             latestDate: formatDate(latest.quoteDate || latest.createdAt)
         };
@@ -596,16 +641,24 @@
         const sortedRows = rows.slice().sort((left, right) => left.effectiveTimestamp - right.effectiveTimestamp);
         const first = sortedRows[0];
         const latest = sortedRows[sortedRows.length - 1];
-        const lowestRow = sortedRows.reduce((best, row) => (best == null || row.unitPrice < best.unitPrice ? row : best), null);
+        const lowestRow = summary.lowestUnitPrice == null
+            ? null
+            : [...sortedRows].reverse().find((row) => Number(row.unitPrice) === Number(summary.lowestUnitPrice)) || null;
+        const highestRow = summary.highestUnitPrice == null
+            ? null
+            : [...sortedRows].reverse().find((row) => Number(row.unitPrice) === Number(summary.highestUnitPrice)) || null;
+        const visibleCurrency = latest?.currency || first?.currency || "USD";
         return [
-            latest && first && summary.netChangePercent != null
-                ? `Latest price is ${formatPercent(summary.netChangePercent)} ${summary.netChange >= 0 ? "above" : "below"} the first visible quote.`
-                : "Not enough valid price points to calculate net change.",
             lowestRow
-                ? `Lowest visible price came from ${lowestRow.supplier || "Unknown supplier"} on ${formatDate(lowestRow.quoteDate || lowestRow.createdAt)}.`
-                : "Lowest visible price could not be determined.",
-            `Price volatility appears ${getHistoryVolatilityLabel(sortedRows).toLowerCase()} across the visible range.`,
-            `There are ${summary.supplierCount} suppliers in this series.`
+                ? `Best recorded price: ${formatCurrency(lowestRow.unitPrice || 0, lowestRow.currency || visibleCurrency)} from ${lowestRow.supplier || "Supplier missing"} on ${formatDate(lowestRow.quoteDate || lowestRow.createdAt)}.`
+                : "Best recorded price is not available.",
+            highestRow
+                ? `Highest observed price: ${formatCurrency(highestRow.unitPrice || 0, highestRow.currency || visibleCurrency)} from ${highestRow.supplier || "Supplier missing"} on ${formatDate(highestRow.quoteDate || highestRow.createdAt)}.`
+                : "Highest observed price is not available.",
+            latest && lowestRow && Number(latest.unitPrice) === Number(lowestRow.unitPrice)
+                ? "Current supplier is already at the best price."
+                : `Current supplier is ${summary.currentVsBestUnitPrice == null ? "--" : formatCurrency(summary.currentVsBestUnitPrice, visibleCurrency)} above the best recorded price.`,
+            `Price volatility is ${getHistoryVolatilityLabel(sortedRows).toLowerCase()} across ${summary.movementCount} movements.`
         ];
     }
 
@@ -976,6 +1029,8 @@
         state.uploadReview = null;
         state.activeSessionId = "";
         state.manualUploadId = createManualUploadId();
+        state.productSummaryModalOpen = false;
+        state.productSummaryModalData = null;
         state.parseError = "";
         state.isParsing = false;
         state.isSubmitting = false;
@@ -1266,6 +1321,8 @@
             historySelectedRows: [],
             historyDetailModalOpen: false,
             historyDetailModalSeries: null,
+            productSummaryModalOpen: false,
+            productSummaryModalData: null,
             historyDetailChart: null,
             historyRowClickTimer: null,
             historyFilters: {
@@ -1274,7 +1331,10 @@
                 dateFrom: "",
                 dateTo: ""
             },
-            persistSessionTimer: null
+            persistSessionTimer: null,
+            analysisFilterTimer: null,
+            historyRefreshFrame: 0,
+            historyMemo: null
         };
     }
 
@@ -1317,6 +1377,12 @@
     function renderStatus(state) {
         if (!state.status.message) return "";
         return `<div class="recipe-status${state.status.tone ? ` is-${escapeHtml(state.status.tone)}` : ""}">${escapeHtml(state.status.message)}</div>`;
+    }
+
+    function waitForNextPaint() {
+        return new Promise((resolve) => {
+            requestAnimationFrame(() => resolve());
+        });
     }
 
     function computeValidation(state) {
@@ -1460,7 +1526,9 @@
             const selectedColumn = state.selectedMappings[fieldName] || "";
             return {
                 fieldName,
-                helpText: FIELD_HELP[fieldName] || "Choose the matching column from the uploaded file.",
+                helpText: FIELD_HELP[fieldName] || (state.mode === "manual"
+                    ? "Choose the matching column from the entered pricing data."
+                    : "Choose the matching column from the uploaded file."),
                 detectedColumn,
                 selectedColumn,
                 detectedQuality: review.match_quality || (detectedColumn ? "possible" : "missing"),
@@ -1479,12 +1547,12 @@
         const bids = getManualNormalizedRows(state);
 
         if (!bids.length) {
-            throw new Error("Add at least one complete supplier offer before starting analysis.");
+            throw new Error("Add at least one complete supplier price row before starting analysis.");
         }
 
         return {
             upload_id: state.manualUploadId,
-            name: `Manual Quote Compare ${new Date().toLocaleDateString("en-US")}`,
+            name: `Manual Pricing Analysis ${new Date().toLocaleDateString("en-US")}`,
             sourcing_need: "",
             source_type: "manual",
             bids,
@@ -1517,90 +1585,245 @@
         return compareOffersByRecency(left, right);
     }
 
+    function normalizeQuantityContext(quantity) {
+        const numericQuantity = Number(quantity || 0);
+        return Number.isFinite(numericQuantity) ? numericQuantity.toFixed(4) : "";
+    }
+
+    function getProductUnitKey(productName, unit) {
+        return `${String(productName || "").trim()}__${String(unit || "").trim()}`;
+    }
+
+    function isSameOffer(left, right) {
+        if (!left || !right) return false;
+        return Number(left._sourceIndex || -1) === Number(right._sourceIndex || -2);
+    }
+
+    function buildProductSummaryStats(offers, productName, unit) {
+        const offersByRecency = [...offers].sort(compareOffersByRecency);
+        const offersByOldest = [...offers].sort((left, right) => compareOffersByRecency(right, left));
+        const offersByUnitPrice = [...offers].sort(compareOffersByUnitPrice);
+        const lowestObservedOffer = offersByUnitPrice[0] || null;
+        const highestObservedOffer = [...offersByUnitPrice].reverse()[0] || null;
+        const latestObservedOffer = offersByRecency[0] || null;
+        const earliestObservedOffer = offersByOldest[0] || null;
+        const averageObservedUnitPrice = offers.length
+            ? offers.reduce((sum, offer) => sum + Number(offer.unit_price || 0), 0) / offers.length
+            : 0;
+
+        return {
+            key: getProductUnitKey(productName, unit),
+            productName,
+            unit,
+            offers: offersByRecency,
+            lowestObservedOffer,
+            highestObservedOffer,
+            latestObservedOffer,
+            earliestObservedOffer,
+            averageObservedUnitPrice,
+            supplierCount: new Set(offers.map((offer) => getSupplierKey(offer.supplier_name)).filter(Boolean)).size
+        };
+    }
+
     function buildDecisionCards(comparison) {
         const bids = comparison?.bids || [];
         const grouped = new Map();
+        const productOfferMap = new Map();
 
         bids.forEach((bid, index) => {
             const product = String(bid.product_name || "").trim();
             const unit = String(bid.unit || "").trim();
             if (!product) return;
-            const key = `${product}__${unit}`;
-            if (!grouped.has(key)) grouped.set(key, []);
-            grouped.get(key).push({
+            const normalizedBid = {
                 ...bid,
                 _sourceIndex: index,
                 quantity: Number(bid.quantity || 0),
                 unit_price: Number(bid.unit_price || 0),
                 total_price: Number(bid.total_price || 0) || Number(bid.quantity || 0) * Number(bid.unit_price || 0)
-            });
+            };
+            const productUnitKey = getProductUnitKey(product, unit);
+            if (!productOfferMap.has(productUnitKey)) productOfferMap.set(productUnitKey, []);
+            productOfferMap.get(productUnitKey).push(normalizedBid);
+            const quantityKey = normalizeQuantityContext(bid.quantity);
+            const key = `${product}__${unit}__${quantityKey}`;
+            if (!grouped.has(key)) grouped.set(key, []);
+            grouped.get(key).push(normalizedBid);
         });
+
+        const productSummaries = new Map(
+            Array.from(productOfferMap.entries()).map(([key, offers]) => {
+                const [productName, unit] = key.split("__");
+                return [key, buildProductSummaryStats(offers, productName, unit)];
+            })
+        );
 
         return Array.from(grouped.values())
             .map((offers) => {
                 const offersByRecency = [...offers].sort(compareOffersByRecency);
-                const supplierGroups = new Map();
-                offers.forEach((offer) => {
-                    const supplierKey = getSupplierKey(offer.supplier_name) || `__missing__${offer._sourceIndex}`;
-                    if (!supplierGroups.has(supplierKey)) supplierGroups.set(supplierKey, []);
-                    supplierGroups.get(supplierKey).push(offer);
-                });
-
-                const supplierRepresentatives = Array.from(supplierGroups.values()).map((supplierOffers) => {
-                    const latestOffer = [...supplierOffers].sort(compareOffersByRecency)[0];
-                    const lowestUnitOffer = [...supplierOffers].sort(compareOffersByUnitPrice)[0];
-                    return {
-                        supplierKey: getSupplierKey(latestOffer?.supplier_name),
-                        supplierName: String(latestOffer?.supplier_name || "").trim(),
-                        latestOffer,
-                        lowestUnitOffer,
-                        offers: supplierOffers
-                    };
-                });
-
-                const currentRepresentative = [...supplierRepresentatives].sort((left, right) => compareOffersByRecency(left.latestOffer, right.latestOffer))[0] || null;
-                const currentOffer = currentRepresentative?.latestOffer || offersByRecency[0] || null;
+                const currentOffer = offersByRecency[0] || null;
+                const productSummary = productSummaries.get(getProductUnitKey(currentOffer?.product_name, currentOffer?.unit)) || buildProductSummaryStats(offers, currentOffer?.product_name || "", currentOffer?.unit || "");
+                const productOffers = productSummary.offers || offersByRecency;
+                const lowestObservedOffer = productSummary.lowestObservedOffer || null;
                 const currentSupplierKey = getSupplierKey(currentOffer?.supplier_name);
-                const comparableAlternatives = supplierRepresentatives
-                    .filter((representative) => representative.latestOffer)
-                    .filter((representative) => representative.supplierKey)
-                    .filter((representative) => representative.supplierKey !== currentSupplierKey)
-                    .filter((representative) => !currentOffer?.currency || !representative.latestOffer?.currency || representative.latestOffer.currency === currentOffer.currency);
-                const recommendedRepresentative = [...comparableAlternatives].sort((left, right) => compareOffersByUnitPrice(left.latestOffer, right.latestOffer))[0] || null;
-                const recommendedOffer = recommendedRepresentative?.latestOffer || null;
+                const currentQuantityKey = normalizeQuantityContext(currentOffer?.quantity);
+                const quantityMatchedOffers = offers
+                    .filter((offer) => {
+                        if (isSameOffer(offer, currentOffer)) return false;
+                        if (normalizeQuantityContext(offer?.quantity) !== currentQuantityKey) return false;
+                        if (currentOffer?.currency && offer?.currency && offer.currency !== currentOffer.currency) return false;
+                        return true;
+                    })
+                    .sort(compareOffersByUnitPrice);
                 const currentUnitPrice = Number(currentOffer?.unit_price || 0);
+                const quantityBasis = Number(currentOffer?.quantity || 0);
+                const currentTotalBasis = Number(currentOffer?.total_price || 0) > 0
+                    ? Number(currentOffer?.total_price || 0)
+                    : currentUnitPrice * quantityBasis;
+                const sameSupplierOffers = productOffers
+                    .filter((offer) => getSupplierKey(offer?.supplier_name) === currentSupplierKey)
+                    .filter((offer) => !isSameOffer(offer, currentOffer))
+                    .sort(compareOffersByUnitPrice);
+                const lowerPriceWithAnotherSupplier = productOffers
+                    .filter((offer) => getSupplierKey(offer?.supplier_name) !== currentSupplierKey)
+                    .filter((offer) => Number(offer?.unit_price || 0) < currentUnitPrice)
+                    .filter((offer) => !currentOffer?.currency || !offer?.currency || offer.currency === currentOffer.currency)
+                    .sort(compareOffersByUnitPrice)[0] || null;
+                const lowerHistoricalPriceWithCurrentSupplier = sameSupplierOffers
+                    .filter((offer) => Number(offer?.unit_price || 0) < currentUnitPrice)
+                    .sort(compareOffersByUnitPrice)[0] || null;
+                const lowerObservedOffer = productOffers
+                    .filter((offer) => Number(offer?.unit_price || 0) < currentUnitPrice)
+                    .sort(compareOffersByUnitPrice)[0] || null;
+                const switchAlternatives = quantityMatchedOffers
+                    .filter((offer) => {
+                        const supplierKey = getSupplierKey(offer?.supplier_name);
+                        return supplierKey && supplierKey !== currentSupplierKey;
+                    });
+                const recommendedSwitchOffer = switchAlternatives[0] || null;
+                const supplierSwitchOffer = recommendedSwitchOffer || lowerPriceWithAnotherSupplier;
+                const recommendedSwitchUnitPrice = Number(supplierSwitchOffer?.unit_price || 0);
+                const switchUnitPriceAdvantage = Math.max(currentUnitPrice - recommendedSwitchUnitPrice, 0);
+                const hasSupplierSwitchSavings = Boolean(
+                    currentOffer &&
+                    supplierSwitchOffer &&
+                    currentSupplierKey &&
+                    getSupplierKey(supplierSwitchOffer?.supplier_name) &&
+                    getSupplierKey(supplierSwitchOffer?.supplier_name) !== currentSupplierKey &&
+                    switchUnitPriceAdvantage > 0 &&
+                    quantityBasis > 0 &&
+                    currentTotalBasis > 0 &&
+                    Number(supplierSwitchOffer?.unit_price || 0) > 0
+                );
+                const savingsType = hasSupplierSwitchSavings ? "supplier-switch" : "";
+                const recommendedOffer = hasSupplierSwitchSavings ? supplierSwitchOffer : null;
                 const recommendedUnitPrice = Number(recommendedOffer?.unit_price || 0);
                 const unitPriceAdvantage = Math.max(currentUnitPrice - recommendedUnitPrice, 0);
-                const quantityBasis = Number(currentOffer?.quantity || 0);
-                const hasValidAlternative = Boolean(
-                    currentOffer &&
-                    recommendedOffer &&
-                    currentSupplierKey &&
-                    recommendedRepresentative?.supplierKey &&
-                    recommendedRepresentative.supplierKey !== currentSupplierKey &&
-                    unitPriceAdvantage > 0
-                );
+                const hasValidAlternative = Boolean(savingsType && recommendedOffer && unitPriceAdvantage > 0);
                 const bestOffer = hasValidAlternative ? recommendedOffer : currentOffer;
                 const savingsAmount = hasValidAlternative
-                    ? unitPriceAdvantage * quantityBasis
+                    ? Math.max(currentTotalBasis - (quantityBasis * recommendedUnitPrice), 0)
                     : 0;
-                const savingsPercent = hasValidAlternative && currentUnitPrice
-                    ? (unitPriceAdvantage / currentUnitPrice) * 100
+                const savingsPercent = hasValidAlternative && currentTotalBasis
+                    ? (savingsAmount / currentTotalBasis) * 100
                     : 0;
-                const isCurrentBest = !hasValidAlternative;
-                const sameSupplierPriceVariation = Boolean(
-                    currentRepresentative?.lowestUnitOffer &&
-                    currentOffer &&
-                    currentRepresentative.lowestUnitOffer !== currentOffer &&
-                    Number(currentRepresentative.lowestUnitOffer.unit_price || 0) < currentUnitPrice
+                const comparableAlternativeCount = new Set(
+                    productOffers
+                        .filter((offer) => getSupplierKey(offer?.supplier_name) && getSupplierKey(offer?.supplier_name) !== currentSupplierKey)
+                        .map((offer) => getSupplierKey(offer?.supplier_name))
+                        .filter(Boolean)
+                ).size;
+                const isCurrentLowestObserved = Boolean(currentOffer && lowestObservedOffer && Number(currentOffer.unit_price || 0) === Number(lowestObservedOffer.unit_price || 0));
+                const observedAtDifferentQuantity = Boolean(lowerObservedOffer && normalizeQuantityContext(lowerObservedOffer.quantity) !== currentQuantityKey);
+                const otherSupplierObservedAtDifferentQuantity = Boolean(
+                    lowerPriceWithAnotherSupplier &&
+                    normalizeQuantityContext(lowerPriceWithAnotherSupplier.quantity) !== currentQuantityKey
                 );
-                const decisionSentence = hasValidAlternative
-                    ? `A valid supplier switch is visible. Move from ${currentOffer?.supplier_name || "the current supplier"} at ${formatCurrency(currentUnitPrice, currentOffer?.currency)} per unit to ${recommendedOffer?.supplier_name || "the recommended supplier"} at ${formatCurrency(recommendedUnitPrice, recommendedOffer?.currency)} per unit. Estimated savings on the current quantity: ${formatCurrency(savingsAmount, currentOffer?.currency)} (${formatPercent(savingsPercent)} lower unit price).`
-                    : sameSupplierPriceVariation
-                        ? `${currentOffer?.supplier_name || "The current supplier"} has other visible unit prices for this product, but they do not support a clean supplier-switch recommendation. Review date, quantity, and quote context before interpreting the difference.`
-                        : comparableAlternatives.length
-                            ? `Alternative supplier quotes are visible, but there is no lower per-unit supplier offer to recommend from the current quote context.`
-                            : `Only one supplier context is visible for this product, so no supplier-switch recommendation is being made.`;
+                const sameSupplierObservedAtDifferentQuantity = Boolean(
+                    lowerHistoricalPriceWithCurrentSupplier &&
+                    normalizeQuantityContext(lowerHistoricalPriceWithCurrentSupplier.quantity) !== currentQuantityKey
+                );
+                let decisionType = "price-variation-detected";
+                if (lowerPriceWithAnotherSupplier) {
+                    decisionType = "lower-price-with-another-supplier";
+                } else if (lowerHistoricalPriceWithCurrentSupplier) {
+                    decisionType = "lower-historical-price-with-current-supplier";
+                } else if (isCurrentLowestObserved) {
+                    decisionType = "lowest-observed-price-already-used";
+                }
+                const decisionTypeLabel = decisionType === "lower-price-with-another-supplier"
+                    ? "Lower price with another supplier"
+                    : decisionType === "lower-historical-price-with-current-supplier"
+                        ? "Lower historical price with current supplier"
+                        : decisionType === "lowest-observed-price-already-used"
+                            ? "No immediate action"
+                            : "Price variation detected";
+                const lowestObservedUnitPrice = Number(lowestObservedOffer?.unit_price || 0);
+                const currentQuantity = Number(currentOffer?.quantity || 0);
+                const potentialSavingsAmount = lowestObservedOffer && lowestObservedUnitPrice < currentUnitPrice
+                    ? Math.max((currentUnitPrice - lowestObservedUnitPrice) * currentQuantity, 0)
+                    : 0;
+                const hasPotentialSavings = potentialSavingsAmount > 0;
+                const potentialSavingsObservedAtDifferentQuantity = Boolean(
+                    hasPotentialSavings &&
+                    lowestObservedOffer &&
+                    normalizeQuantityContext(lowestObservedOffer.quantity) !== currentQuantityKey
+                );
+                const lowestPriceInsight = lowestObservedOffer
+                    ? isCurrentLowestObserved
+                        ? "Lowest price observed"
+                        : `Lower price observed: ${formatCurrency(lowestObservedOffer.unit_price || 0, lowestObservedOffer.currency || currentOffer?.currency)} (${lowestObservedOffer.supplier_name || "Supplier missing"}, Qty ${Number(lowestObservedOffer.quantity || 0)}, ${formatDate(lowestObservedOffer.quote_date)})`
+                    : "";
+                const referenceOffer = hasValidAlternative
+                    ? recommendedOffer
+                    : decisionType === "lower-price-with-another-supplier"
+                        ? lowerPriceWithAnotherSupplier
+                        : decisionType === "lower-historical-price-with-current-supplier"
+                            ? lowerHistoricalPriceWithCurrentSupplier
+                            : decisionType === "price-variation-detected"
+                                ? (lowerObservedOffer || lowestObservedOffer || currentOffer)
+                                : (lowestObservedOffer || currentOffer);
+                const quantityContextNote = referenceOffer
+                    ? normalizeQuantityContext(referenceOffer.quantity) !== currentQuantityKey
+                        ? "Observed at different quantity"
+                        : "Observed at matching quantity"
+                    : "";
+                const referenceOfferLabel = hasValidAlternative
+                    ? "Direct savings reference"
+                    : decisionType === "lower-price-with-another-supplier"
+                        ? "Another supplier reference"
+                        : decisionType === "lower-historical-price-with-current-supplier"
+                            ? "Current supplier history"
+                            : decisionType === "lowest-observed-price-already-used"
+                                ? "Best price benchmark"
+                                : "Observed price reference";
+                const compactResultInsight = hasValidAlternative && recommendedOffer
+                    ? `Best: ${formatCurrency(recommendedOffer.unit_price || 0, recommendedOffer.currency || currentOffer?.currency)} (${recommendedOffer.supplier_name || "Supplier missing"})`
+                    : decisionType === "lowest-observed-price-already-used"
+                        ? "Lowest price observed"
+                        : referenceOffer && Number(referenceOffer.unit_price || 0) > 0
+                            ? `Best: ${formatCurrency(referenceOffer.unit_price || 0, referenceOffer.currency || currentOffer?.currency)} (${referenceOffer.supplier_name || "Supplier missing"})`
+                            : "";
+                const resultBadgeTooltip = referenceOffer && Number(referenceOffer.unit_price || 0) > 0
+                    ? `Best price: ${formatCurrency(referenceOffer.unit_price || 0, referenceOffer.currency || currentOffer?.currency)} from ${referenceOffer.supplier_name || "Supplier missing"}${referenceOffer.quote_date ? ` (${formatDate(referenceOffer.quote_date)})` : ""}`
+                    : decisionTypeLabel;
+                const supplierSwitchQuantityNote = recommendedOffer && normalizeQuantityContext(recommendedOffer.quantity) !== currentQuantityKey
+                    ? ` The lower supplier price was observed at Qty ${Number(recommendedOffer.quantity || 0)} and is estimated against the current Qty ${Number(quantityBasis || 0)}.`
+                    : " The lower supplier price was observed at the same quantity.";
+                const decisionSentence = savingsType === "supplier-switch"
+                    ? `Supplier switch savings are visible. Move from ${currentOffer?.supplier_name || "the current supplier"} at ${formatCurrency(currentUnitPrice, currentOffer?.currency)} per unit to ${recommendedOffer?.supplier_name || "the recommended supplier"} at ${formatCurrency(recommendedUnitPrice, recommendedOffer?.currency)} per unit.${supplierSwitchQuantityNote} Estimated savings on the current quantity: ${formatCurrency(savingsAmount, currentOffer?.currency)} (${formatPercent(savingsPercent)} lower total spend).`
+                    : decisionType === "lower-price-with-another-supplier"
+                        ? `${lowerPriceWithAnotherSupplier?.supplier_name || "Another supplier"} has a lower observed unit price for this product at ${formatCurrency(lowerPriceWithAnotherSupplier?.unit_price || 0, lowerPriceWithAnotherSupplier?.currency || currentOffer?.currency)}. ${otherSupplierObservedAtDifferentQuantity ? "Observed at different quantity." : "Observed in comparable quantity history."}`
+                        : decisionType === "lower-historical-price-with-current-supplier"
+                            ? `${currentOffer?.supplier_name || "The current supplier"} previously offered this product at a lower observed unit price of ${formatCurrency(lowerHistoricalPriceWithCurrentSupplier?.unit_price || 0, lowerHistoricalPriceWithCurrentSupplier?.currency || currentOffer?.currency)}. ${sameSupplierObservedAtDifferentQuantity ? "Observed at different quantity." : "Observed in matching quantity history."}`
+                            : decisionType === "lowest-observed-price-already-used"
+                                ? `This row already matches the best recorded unit price for this product. Keep it as the price benchmark while reviewing supplier and quantity context.`
+                                : comparableAlternativeCount
+                                    ? `Lower prices were observed for this product, but only under a different commercial context. Review supplier, quantity, and date before acting on the price movement.`
+                                    : `Only one visible pricing context exists for this product, so the screen is showing price intelligence rather than a supplier-switch recommendation.`;
+                const sameSupplierPriceVariation = Boolean(lowerHistoricalPriceWithCurrentSupplier);
+                const resultTone = decisionType === "price-variation-detected" || decisionType === "lowest-observed-price-already-used"
+                    ? "neutral"
+                    : "opportunity";
 
                 return {
                     productName: currentOffer?.product_name || bestOffer?.product_name || "",
@@ -1613,16 +1836,33 @@
                     offers: [...offers].sort(compareOffersByPrice),
                     savingsAmount,
                     savingsPercent,
-                    isCurrentBest,
+                    savingsType,
+                    isCurrentBest: decisionType === "lowest-observed-price-already-used" && !hasValidAlternative,
                     hasValidAlternative,
-                    comparableAlternativeCount: comparableAlternatives.length,
+                    comparableAlternativeCount,
                     sameSupplierPriceVariation,
+                    decisionType,
+                    quantityContextNote,
+                    lowerPriceWithAnotherSupplier,
+                    lowerHistoricalPriceWithCurrentSupplier,
+                    observedAtDifferentQuantity,
+                    referenceOffer,
+                    referenceOfferLabel,
+                    productSummary,
+                    lowestObservedOffer,
+                    lowestPriceInsight,
+                    compactResultInsight,
+                    resultBadgeTooltip,
+                    potentialSavingsAmount,
+                    hasPotentialSavings,
+                    potentialSavingsObservedAtDifferentQuantity,
+                    isCurrentLowestObserved,
                     decisionSentence,
-                    statusLabel: hasValidAlternative ? "Savings available" : comparableAlternatives.length ? "No unit advantage" : "Already best",
-                    statusTone: hasValidAlternative ? "opportunity" : comparableAlternatives.length ? "neutral" : "best"
+                    statusLabel: decisionTypeLabel,
+                    statusTone: resultTone
                 };
             })
-            .sort((left, right) => left.productName.localeCompare(right.productName));
+            .sort((left, right) => left.productName.localeCompare(right.productName) || String(left.unit || "").localeCompare(String(right.unit || "")) || Number(right.quantity || 0) - Number(left.quantity || 0));
     }
 
     function buildAnalyzeSummary(result) {
@@ -1671,6 +1911,18 @@
         };
     }
 
+    function getAnalysisSummary(result) {
+        const existingSummary = result?.summary;
+        if (
+            existingSummary &&
+            Array.isArray(existingSummary.decisionCards) &&
+            (!existingSummary.decisionCards.length || existingSummary.decisionCards[0]?.productSummary)
+        ) {
+            return existingSummary;
+        }
+        return buildAnalyzeSummary(result);
+    }
+
     function getHistoryComparisons(state) {
         const historyMap = new Map();
         (state.savedComparisons || []).forEach((comparison) => {
@@ -1713,7 +1965,7 @@
                     historyId: `${comparison.comparison_id || "comparison"}-${index}`,
                     comparisonId: comparison.comparison_id || "",
                     uploadId: comparison.upload_id || "",
-                    comparisonName: comparison.name || "Saved quotes",
+                    comparisonName: comparison.name || "Saved pricing records",
                     productName,
                     supplier,
                     unit: normalizeHistoryText(bid.unit),
@@ -1745,6 +1997,23 @@
         return state.qcHistoryData;
     }
 
+    function getHistoryMemo(state) {
+        const dataset = getHistoryDataset(state);
+        if (!state.historyMemo || state.historyMemo.datasetRef !== dataset) {
+            state.historyMemo = {
+                datasetRef: dataset,
+                filterScope: new Map(),
+                filterOptions: new Map(),
+                filteredKey: "",
+                filteredRows: null,
+                displayRowsRef: null,
+                displayKey: "",
+                displayRows: null
+            };
+        }
+        return state.historyMemo;
+    }
+
     function flattenHistoryRows(state) {
         return getHistoryDataset(state);
     }
@@ -1755,8 +2024,12 @@
         const startDate = ignoreKey === "dateFrom" ? null : parseDateValue(state.historyFilters.dateFrom, { startOfDay: true });
         const endDate = ignoreKey === "dateTo" ? null : parseDateValue(state.historyFilters.dateTo, { endOfDay: true });
         const focusedSeriesKey = normalizeHistoryText(state.historyFocusedSeriesKey);
-
-        return getHistoryDataset(state).filter((row) => {
+        const memo = getHistoryMemo(state);
+        const scopeKey = [ignoreKey, product, supplier, startDate?.getTime() || "", endDate?.getTime() || "", focusedSeriesKey].join("|");
+        if (memo.filterScope.has(scopeKey)) {
+            return memo.filterScope.get(scopeKey);
+        }
+        const rows = getHistoryDataset(state).filter((row) => {
             if (focusedSeriesKey && getHistorySeriesKey(row.productName, row.unit) !== focusedSeriesKey) return false;
             if (product && row.productName !== product) return false;
             if (supplier && row.supplier !== supplier) return false;
@@ -1764,24 +2037,33 @@
             if (endDate && row.effectiveDate && row.effectiveDate > endDate) return false;
             return true;
         });
+        memo.filterScope.set(scopeKey, rows);
+        return rows;
     }
 
     function getHistoryFilterOptions(state, key) {
+        const memo = getHistoryMemo(state);
+        const optionKey = [key, normalizeHistoryText(state.historyFilters.product), normalizeHistoryText(state.historyFilters.supplier), state.historyFilters.dateFrom || "", state.historyFilters.dateTo || "", normalizeHistoryText(state.historyFocusedSeriesKey)].join("|");
+        if (memo.filterOptions.has(optionKey)) {
+            return memo.filterOptions.get(optionKey);
+        }
+        let options = [];
         if (key === "product") {
-            return Array.from(new Set(
+            options = Array.from(new Set(
                 getHistoryFilterScope(state, { ignoreKey: "product" })
                     .map((row) => row.productName)
                     .filter(isValidHistoryDimension)
             )).sort((left, right) => left.localeCompare(right));
         }
         if (key === "supplier") {
-            return Array.from(new Set(
+            options = Array.from(new Set(
                 getHistoryFilterScope(state, { ignoreKey: "supplier" })
                     .map((row) => row.supplier)
                     .filter(isValidHistoryDimension)
             )).sort((left, right) => left.localeCompare(right));
         }
-        return [];
+        memo.filterOptions.set(optionKey, options);
+        return options;
     }
 
     function syncHistoryFilterDefaults(state) {
@@ -1809,6 +2091,11 @@
         const startDate = parseDateValue(dateFrom, { startOfDay: true });
         const endDate = parseDateValue(dateTo, { endOfDay: true });
         const focusedSeriesKey = normalizeHistoryText(state.historyFocusedSeriesKey);
+        const memo = getHistoryMemo(state);
+        const filteredKey = [product, supplier, dateFrom || "", dateTo || "", focusedSeriesKey].join("|");
+        if (memo.filteredKey === filteredKey && Array.isArray(memo.filteredRows)) {
+            return memo.filteredRows;
+        }
 
         const visibleRows = getHistoryDataset(state)
             .filter((row) => !focusedSeriesKey || getHistorySeriesKey(row.productName, row.unit) === focusedSeriesKey)
@@ -1828,7 +2115,7 @@
             });
 
         const lastSeenBySeries = new Map();
-        return visibleRows.map((row) => {
+        const filteredRows = visibleRows.map((row) => {
                 const seriesKey = getHistorySeriesKey(row.productName, row.unit);
                 const previousSameSeries = lastSeenBySeries.get(seriesKey) || null;
                 const changeValue = previousSameSeries ? row.unitPrice - previousSameSeries.unitPrice : null;
@@ -1842,6 +2129,9 @@
                     changePercent
                 };
             });
+        memo.filteredKey = filteredKey;
+        memo.filteredRows = filteredRows;
+        return filteredRows;
     }
 
     function getHistorySummary(rows) {
@@ -1919,6 +2209,7 @@
 
     function initializeHistoryFilters(state) {
         state.qcHistoryData = buildHistoryDataset(state);
+        state.historyMemo = null;
         state.historyFocusedSeriesKey = "";
         syncHistoryFilterDefaults(state);
     }
@@ -1940,7 +2231,6 @@
 
     function hydrateComparisons(state, comparisons) {
         state.savedComparisons = Array.isArray(comparisons) ? comparisons : [];
-        state.qcHistoryData = buildHistoryDataset(state);
         state.hasLoadedSavedComparisons = true;
         initializeHistoryFilters(state);
     }
@@ -2079,16 +2369,16 @@
                 <div class="qc2-head">
                     <div class="panel-label">Quote Compare</div>
                     <h2 class="qc2-title">Choose how you want to begin</h2>
-                    <p class="qc2-copy">Upload a supplier file for column review or enter supplier offers manually when you need a quick buying decision.</p>
+                    <p class="qc2-copy">Upload a supplier pricing file for column review or enter supplier price rows manually when you need a quick buying decision.</p>
                 </div>
                 <div class="qc2-choice-grid">
                     <button type="button" class="qc2-choice-card" data-qc-action="start-upload">
-                        <span class="qc2-choice-title">Upload Supplier File</span>
+                        <span class="qc2-choice-title">Upload Pricing File</span>
                         <span class="qc2-choice-copy">Parse one CSV or Excel file, review the detected mappings, and move straight into analysis.</span>
                     </button>
                     <button type="button" class="qc2-choice-card qc2-choice-card-secondary" data-qc-action="start-manual">
-                        <span class="qc2-choice-title">Enter Supplier Offers Manually</span>
-                        <span class="qc2-choice-copy">Add supplier offers row by row when quotes arrive outside a spreadsheet.</span>
+                        <span class="qc2-choice-title">Enter Supplier Prices Manually</span>
+                        <span class="qc2-choice-copy">Add supplier price rows one by one when data arrives outside a spreadsheet.</span>
                     </button>
                 </div>
             </section>
@@ -2108,8 +2398,8 @@
                 <div class="qc2-card qc2-upload-card">
                     <div class="qc2-head qc2-upload-head">
                         <div class="upload-step">Step 1</div>
-                        <h2 class="qc2-title">Upload supplier file</h2>
-                        <p class="qc2-copy">Upload one supplier quote file, check the detected columns, and move into quote review with a clean structured file.</p>
+                        <h2 class="qc2-title">Upload supplier pricing file</h2>
+                        <p class="qc2-copy">Upload one supplier pricing file, check the detected columns, and move into review with a clean structured file.</p>
                     </div>
                     <div class="qc2-upload-panel">
                         <div class="qc2-upload-shell">
@@ -2298,13 +2588,13 @@
                 <div class="qc2-card qc2-upload-card">
                     <div class="qc2-head qc2-head-compact">
                         <div class="upload-step">Step 1</div>
-                        <h2 class="qc2-title">Enter supplier offers manually</h2>
+                        <h2 class="qc2-title">Enter supplier prices manually</h2>
                         <p class="qc2-copy">Enter supplier rows by hand using the same required fields and review discipline as the upload flow before analysis begins.</p>
                     </div>
                     <div class="qc2-upload-panel">
                         <div class="qc2-upload-shell">
                             <div class="qc2-upload-copy-block">
-                                <div class="qc2-upload-title">Manual supplier rows</div>
+                                <div class="qc2-upload-title">Manual pricing rows</div>
                                 <div class="qc2-upload-copy">${validation.completeCount} ready rows • ${validation.incompleteCount} incomplete rows</div>
                                 <div class="qc2-upload-note">Required fields come first. Optional context stays available below each row when payment terms, notes, or validity dates matter.</div>
                             </div>
@@ -2360,7 +2650,7 @@
                     <div class="mapping-review-head">
                         <div>
                             <div class="upload-step">Step 2</div>
-                            <h2 class="mapping-review-title">Review your manual quote rows</h2>
+                            <h2 class="mapping-review-title">Review your manual pricing rows</h2>
                             <p class="mapping-review-copy">Confirm the required fields, scan the entered supplier rows, and move to analysis only when the manual dataset is complete.</p>
                         </div>
                         <div class="mapping-summary-chips">
@@ -2373,7 +2663,7 @@
                         <div class="mapping-section-head">
                             <div>
                                 <div class="mapping-section-title">Entered supplier rows</div>
-                                <div class="mapping-section-copy">Review the rows exactly as they will be sent into Quote Compare analysis.</div>
+                                <div class="mapping-section-copy">Review the rows exactly as they will be sent into pricing analysis.</div>
                             </div>
                         </div>
                         <div class="quote-compare-table-scroll qc2-manual-review-table-shell">
@@ -2404,13 +2694,13 @@
                                 <div class="mapping-section-copy">Currency, delivery timing, payment terms, validity, and notes are passed through when provided.</div>
                             </div>
                         </div>
-                        <div class="mapping-alert mapping-alert-info">Total price is derived automatically from Quantity × Unit Price when not entered manually.</div>
+                        <div class="mapping-alert mapping-alert-info">Total price is derived automatically from Quantity x Unit Price when not entered manually.</div>
                     </section>
                     ${incompleteText ? `<div class="mapping-alert mapping-alert-error">${escapeHtml(incompleteText)}</div>` : ""}
                     ${renderStatus(state)}
                     <div class="qc2-actions">
                         <button type="button" class="secondary-btn" data-qc-action="back-review">Back</button>
-                        <button type="button" class="action-btn" data-qc-action="manual-analyze" ${validation.ready ? "" : "disabled"}>Start Analysis</button>
+                        <button type="button" class="action-btn" data-qc-action="manual-analyze" ${validation.ready && !state.isSubmitting ? "" : "disabled"}>${state.isSubmitting ? "Starting..." : "Start Analysis"}</button>
                     </div>
                 </div>
             </section>
@@ -2500,7 +2790,6 @@
                     <div class="mapping-toolbar">
                         <div class="mapping-toolbar-copy">Required fields come first. Each uploaded column can be assigned only once.</div>
                         <div class="mapping-toolbar-actions">
-                            <button type="button" class="secondary-btn mapping-toolbar-btn" data-qc-action="auto-map">Auto-map detected columns</button>
                             <button type="button" class="secondary-btn mapping-toolbar-btn" data-qc-action="clear-mappings">Clear selections</button>
                         </div>
                     </div>
@@ -2531,7 +2820,509 @@
                     ${renderStatus(state)}
                     <div class="qc2-actions">
                         <button type="button" class="secondary-btn" data-qc-action="back-upload">Back</button>
-                        <button type="button" class="action-btn" data-qc-action="start-analysis" ${state.validation.ready ? "" : "disabled"}>Start Analysis</button>
+                        <button type="button" class="action-btn" data-qc-action="start-analysis" ${state.validation.ready && !state.isSubmitting ? "" : "disabled"}>${state.isSubmitting ? "Starting..." : "Start Analysis"}</button>
+                    </div>
+                </div>
+            </section>
+        `;
+    }
+
+    const MANUAL_REBUILD_FIELDS = [
+        { key: "product_name", label: "Product Name", required: true, type: "text" },
+        { key: "supplier_name", label: "Supplier", required: true, type: "text" },
+        { key: "unit", label: "Unit", required: true, type: "text" },
+        { key: "quantity", label: "Quantity", required: true, type: "number", min: "0", step: "0.01" },
+        { key: "unit_price", label: "Unit Price", required: true, type: "number", min: "0", step: "0.01" },
+        { key: "quote_date", label: "Date", required: true, type: "date" },
+        { key: "currency", label: "Currency", required: false, type: "text" },
+        { key: "delivery_time", label: "Delivery Time", required: false, type: "text" },
+        { key: "payment_term", label: "Payment Terms", required: false, type: "text" },
+        { key: "valid_until", label: "Valid Until", required: false, type: "date" },
+        { key: "notes", label: "Notes", required: false, type: "text" }
+    ];
+
+    const MANUAL_REBUILD_HEADERS = MANUAL_REBUILD_FIELDS.map((field) => field.label);
+    const MANUAL_REBUILD_REQUIRED_LABELS = Object.fromEntries(
+        MANUAL_REBUILD_FIELDS.filter((field) => field.required).map((field) => [field.key, field.label])
+    );
+
+    function normalizeManualDraftText(value) {
+        return String(value ?? "").trim();
+    }
+
+    function parseManualDraftNumber(value) {
+        const normalizedValue = String(value ?? "").trim().replace(/,/g, "");
+        if (!normalizedValue) return 0;
+        const parsed = Number(normalizedValue);
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function isManualDraftRowBlank(row) {
+        return MANUAL_REBUILD_FIELDS.every((field) => normalizeManualDraftText(row?.[field.key]) === "");
+    }
+
+    function getManualRowMissingFields(row) {
+        return MANUAL_REBUILD_FIELDS
+            .filter((field) => field.required)
+            .filter((field) => {
+                if (field.key === "quantity" || field.key === "unit_price") {
+                    return !(parseManualDraftNumber(row?.[field.key]) > 0);
+                }
+                return !normalizeManualDraftText(row?.[field.key]);
+            })
+            .map((field) => field.key);
+    }
+
+    function getManualDraftStats(state) {
+        const draftRows = (state.manualRows || []).filter((row) => !isManualDraftRowBlank(row));
+        const incompleteRows = draftRows
+            .map((row, index) => ({
+                index,
+                row,
+                missingFields: getManualRowMissingFields(row)
+            }))
+            .filter((item) => item.missingFields.length > 0);
+        return {
+            draftRows,
+            rowCount: draftRows.length,
+            incompleteRows,
+            incompleteCount: incompleteRows.length,
+            readyCount: draftRows.length - incompleteRows.length,
+            ready: draftRows.length > 0 && incompleteRows.length === 0
+        };
+    }
+
+    function buildManualDraftTableRows(state) {
+        return getManualDraftStats(state).draftRows.map((row) => Object.fromEntries(
+            MANUAL_REBUILD_FIELDS.map((field) => [field.label, row?.[field.key] ?? ""])
+        ));
+    }
+
+    function buildManualReviewPayloadFromDraft() {
+        return {
+            session_id: "",
+            filename: "Manual entry",
+            required_fields: REQUIRED_FIELDS,
+            optional_fields: OPTIONAL_FIELDS,
+            message: "Manual pricing rows are ready for mapping review.",
+            review_message: "Review required and optional column matches before moving into pricing analysis.",
+            mapping: Object.fromEntries(MANUAL_REBUILD_FIELDS.map((field) => [field.label, field.label])),
+            field_reviews: MANUAL_REBUILD_FIELDS.map((field) => ({
+                field: field.label,
+                detected_column: field.label,
+                score: 200,
+                match_quality: "exact"
+            })),
+            matched_fields: REQUIRED_FIELDS.length,
+            missing_fields: [],
+            optional_columns: [],
+            headers: MANUAL_REBUILD_HEADERS
+        };
+    }
+
+    function prepareManualDraftForReview(state) {
+        const stats = getManualDraftStats(state);
+        if (!stats.rowCount) {
+            throw new Error("Add at least one pricing row before continuing to review.");
+        }
+        if (stats.incompleteCount) {
+            const incompleteText = stats.incompleteRows
+                .map((item) => `Row ${item.index + 1}: ${item.missingFields.map((fieldKey) => MANUAL_REBUILD_REQUIRED_LABELS[fieldKey]).join(", ")}`)
+                .join(" | ");
+            throw new Error(`Complete the required fields before continuing. ${incompleteText}`);
+        }
+        state.rows = buildManualDraftTableRows(state);
+        initializeReviewState(state, buildManualReviewPayloadFromDraft());
+    }
+
+    function applySelectedMappingsToRows(rows, mapping) {
+        const missingFields = REQUIRED_FIELDS.filter((fieldName) => !mapping?.[fieldName]);
+        if (missingFields.length) {
+            throw new Error(`Missing required field mappings: ${missingFields.join(", ")}`);
+        }
+        return (rows || []).map((row) => {
+            const mappedRow = {};
+            [...REQUIRED_FIELDS, ...OPTIONAL_FIELDS].forEach((fieldName) => {
+                const sourceColumn = mapping?.[fieldName];
+                if (!sourceColumn) return;
+                mappedRow[fieldName] = row?.[sourceColumn] ?? "";
+            });
+            return mappedRow;
+        });
+    }
+
+    function normalizeMappedManualRows(rows) {
+        const textFields = new Set(["Supplier", "Product Name", "Unit", "Date", "Currency", "Delivery Time", "Payment Terms", "Valid Until", "Notes"]);
+        return (rows || []).map((row) => {
+            const normalizedRow = {};
+            Object.entries(row || {}).forEach(([key, value]) => {
+                normalizedRow[key] = textFields.has(key) ? normalizeManualDraftText(value) : value;
+            });
+            return normalizedRow;
+        });
+    }
+
+    function buildQuoteBidImportResultFromRows(rows) {
+        const bids = [];
+        let skippedRowCount = 0;
+        (rows || []).forEach((row) => {
+            const supplierName = normalizeManualDraftText(row?.["Supplier"]);
+            const productName = normalizeManualDraftText(row?.["Product Name"]);
+            const unit = normalizeManualDraftText(row?.["Unit"]);
+            const quantity = parseManualDraftNumber(row?.["Quantity"]);
+            const unitPrice = parseManualDraftNumber(row?.["Unit Price"]);
+            const totalPrice = parseManualDraftNumber(row?.["Total Price"]);
+            if (!supplierName && !productName && quantity <= 0 && unitPrice <= 0 && totalPrice <= 0) {
+                skippedRowCount += 1;
+                return;
+            }
+            if (!supplierName || quantity <= 0) {
+                skippedRowCount += 1;
+                return;
+            }
+            const resolvedTotal = totalPrice > 0 ? totalPrice : quantity * unitPrice;
+            if (unitPrice <= 0 && resolvedTotal <= 0) {
+                skippedRowCount += 1;
+                return;
+            }
+            bids.push({
+                supplier_name: supplierName,
+                product_name: productName,
+                unit,
+                quantity: Number(quantity.toFixed(4)),
+                unit_price: Number(unitPrice.toFixed(4)),
+                total_price: Number(resolvedTotal.toFixed(4)),
+                quote_date: normalizeManualDraftText(row?.["Date"]),
+                currency: normalizeManualDraftText(row?.["Currency"]).toUpperCase() || "USD",
+                delivery_time: normalizeManualDraftText(row?.["Delivery Time"]),
+                payment_term: normalizeManualDraftText(row?.["Payment Terms"]),
+                valid_until: normalizeManualDraftText(row?.["Valid Until"]),
+                notes: normalizeManualDraftText(row?.["Notes"])
+            });
+        });
+        return {
+            bids,
+            skipped_row_count: skippedRowCount,
+            valid_row_count: bids.length
+        };
+    }
+
+    function refreshManualDraftUi(elements, state, rowIndex) {
+        if (state.currentScreen !== "manual" || !elements.app) return;
+        const stats = getManualDraftStats(state);
+        const summaryNode = elements.app.querySelector("[data-qc-manual-summary]");
+        if (summaryNode) {
+            summaryNode.textContent = `${stats.readyCount} ready rows | ${stats.incompleteCount} incomplete rows`;
+        }
+        const reviewButton = elements.app.querySelector('[data-qc-action="go-manual-review"]');
+        if (reviewButton) {
+            reviewButton.disabled = !stats.rowCount;
+        }
+        const rowNode = elements.app.querySelector(`[data-manual-row="${rowIndex}"]`);
+        if (!rowNode) return;
+        const row = state.manualRows[rowIndex] || createEmptyManualRow();
+        const missingFields = getManualRowMissingFields(row);
+        const showInlineFeedback = !isManualDraftRowBlank(row) && missingFields.length > 0;
+        rowNode.classList.toggle("is-incomplete", showInlineFeedback);
+        rowNode.querySelectorAll("[data-manual-field]").forEach((input) => {
+            const fieldKey = input.dataset.manualField || "";
+            const isInvalid = showInlineFeedback && missingFields.includes(fieldKey);
+            input.classList.toggle("is-invalid", isInvalid);
+            if (isInvalid) {
+                input.setAttribute("aria-invalid", "true");
+            } else {
+                input.removeAttribute("aria-invalid");
+            }
+        });
+        const noteNode = rowNode.querySelector("[data-qc-manual-row-note]");
+        if (noteNode) {
+            noteNode.hidden = !showInlineFeedback;
+            noteNode.textContent = showInlineFeedback
+                ? `Complete: ${missingFields.map((fieldKey) => MANUAL_REBUILD_REQUIRED_LABELS[fieldKey]).join(", ")}.`
+                : "";
+        }
+    }
+
+    function getManualEntryScroller(elements) {
+        return elements.app?.querySelector(".qc2-manual-entry-scroll") || null;
+    }
+
+    function restoreManualEntryScrollLeft(elements, scrollLeft) {
+        requestAnimationFrame(() => {
+            const scroller = getManualEntryScroller(elements);
+            if (!scroller) return;
+            scroller.scrollLeft = Math.max(Number(scrollLeft) || 0, 0);
+        });
+    }
+
+    function renderManualDraftHeaderCell(field) {
+        return `
+            <th class="${field.required ? "is-required" : "is-optional"}">
+                <span class="qc2-manual-entry-head-label">${escapeHtml(field.label)}</span>
+                <span class="qc2-manual-entry-head-badge">${field.required ? "Required" : "Optional"}</span>
+            </th>
+        `;
+    }
+
+    function renderManualDraftCell(row, index, field) {
+        const value = row?.[field.key] ?? "";
+        const missingFields = getManualRowMissingFields(row);
+        const isInvalid = !isManualDraftRowBlank(row) && missingFields.includes(field.key);
+        const attrs = [];
+        if (field.min != null) attrs.push(`min="${escapeHtml(field.min)}"`);
+        if (field.step != null) attrs.push(`step="${escapeHtml(field.step)}"`);
+        return `
+            <td class="${field.required ? "is-required" : "is-optional"}">
+                <label class="qc2-manual-entry-cell">
+                    <span class="qc2-manual-entry-mobile-label">${escapeHtml(field.label)}${field.required ? " *" : ""}</span>
+                    <input
+                        class="recipe-input qc2-manual-entry-input ${isInvalid ? "is-invalid" : ""}"
+                        type="${field.type}"
+                        ${attrs.join(" ")}
+                        data-manual-field="${field.key}"
+                        data-index="${index}"
+                        value="${escapeHtml(value)}"
+                        aria-label="${escapeHtml(field.label)}"
+                    >
+                </label>
+            </td>
+        `;
+    }
+
+    function renderManualDraftRow(row, index) {
+        const missingFields = getManualRowMissingFields(row);
+        const showInlineFeedback = !isManualDraftRowBlank(row) && missingFields.length > 0;
+        return `
+            <tr class="${showInlineFeedback ? "is-incomplete" : ""}" data-manual-row="${index}">
+                <td class="qc2-manual-entry-row-index">${index + 1}</td>
+                ${MANUAL_REBUILD_FIELDS.map((field) => renderManualDraftCell(row, index, field)).join("")}
+                <td class="qc2-manual-entry-row-actions">
+                    <button type="button" class="secondary-btn qc2-remove-row" data-qc-action="remove-manual-row" data-index="${index}" ${index === 0 ? "disabled" : ""}>Remove</button>
+                    ${showInlineFeedback ? `<div class="qc2-manual-inline-note">Complete: ${escapeHtml(missingFields.map((fieldKey) => MANUAL_REBUILD_REQUIRED_LABELS[fieldKey]).join(", "))}.</div>` : ""}
+                </td>
+            </tr>
+        `;
+    }
+
+    function renderQcManual(state) {
+        const stats = getManualDraftStats(state);
+        return `
+            <section class="qc2-screen qc2-screen-manual">
+                <div class="qc2-card qc2-upload-card">
+                    <div class="qc2-head qc2-head-compact">
+                        <div class="upload-step">Step 1</div>
+                        <h2 class="qc2-title">Enter pricing data</h2>
+                        <p class="qc2-copy">Enter pricing rows manually using the same fields expected by upload, then continue into the same mapping and analysis workflow.</p>
+                    </div>
+                    <div class="qc2-upload-panel">
+                        <div class="qc2-upload-shell">
+                            <div class="qc2-upload-copy-block">
+                                <div class="qc2-upload-title">Manual entry</div>
+                                <div class="qc2-upload-copy">${stats.readyCount} ready rows • ${stats.incompleteCount} incomplete rows</div>
+                                <div class="qc2-upload-note">Required fields mirror upload exactly. Optional fields keep delivery, payment, and validity context attached to each row.</div>
+                            </div>
+                            <div class="qc2-upload-actions">
+                                <button type="button" class="secondary-btn" data-qc-action="add-manual-row">Add Row</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="qc2-manual-entry-shell">
+                        <div class="qc2-manual-entry-scroll">
+                            <table class="quote-compare-table qc2-manual-entry-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        ${MANUAL_REBUILD_FIELDS.map((field) => renderManualDraftHeaderCell(field)).join("")}
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${state.manualRows.map((row, index) => renderManualDraftRow(row, index)).join("")}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="qc2-manual-entry-legend">
+                        <span><strong>Required:</strong> Product Name, Supplier, Unit, Quantity, Unit Price, Date</span>
+                        <span><strong>Optional:</strong> Currency, Delivery Time, Payment Terms, Valid Until, Notes</span>
+                    </div>
+                    ${renderStatus(state)}
+                    <div class="qc2-actions qc2-manual-actions">
+                        <div class="qc2-manual-actions-group">
+                            <button type="button" class="secondary-btn qc2-manual-footer-btn" data-qc-action="back-start">Back</button>
+                            <button type="button" class="secondary-btn qc2-manual-footer-btn" data-qc-action="add-manual-row">Add Row</button>
+                        </div>
+                        <div class="qc2-manual-actions-group qc2-manual-actions-group-end">
+                            <button type="button" class="action-btn qc2-manual-footer-btn qc2-manual-footer-btn-primary" data-qc-action="go-manual-review" ${stats.rowCount ? "" : "disabled"}>Review Columns</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        `;
+    }
+
+    function renderQcReview(state) {
+        const rows = getReviewRows(state).map((row) => ({ ...row, options: buildMappingOptions(state, row) }));
+        const requiredRows = rows.filter((row) => row.required);
+        const optionalRows = rows.filter((row) => !row.required);
+        const duplicateColumns = state.validation.duplicateColumns.map((item) => item.columnName);
+        const duplicateText = state.validation.duplicateColumns.map((item) => `"${item.columnName}" is assigned to ${item.fieldNames.join(", ")}.`).join(" ");
+        const missingText = state.validation.missingFields.length ? `Map the remaining required fields: ${state.validation.missingFields.join(", ")}.` : "";
+        const reviewCopy = state.mode === "manual"
+            ? "Confirm the required fields, adjust anything you want to reinterpret, and start analysis only when the mapping is complete."
+            : "Confirm each required field, adjust anything that was matched incorrectly, and start analysis only when the mapping is complete.";
+        const sourceLabel = state.mode === "manual" ? "Manual entry" : (state.file?.name || state.uploadReview?.filename || "Uploaded file");
+        const toolbarCopy = state.mode === "manual"
+            ? "Required fields come first. Each entered column can be assigned only once."
+            : "Required fields come first. Each uploaded column can be assigned only once.";
+
+        return `
+            <section class="qc2-screen qc2-screen-review">
+                <div class="mapping-review-panel qc2-review-panel">
+                    <div class="mapping-review-head">
+                        <div>
+                            <div class="upload-step">Step 2</div>
+                            <h2 class="mapping-review-title">Review your column matches</h2>
+                            <p class="mapping-review-copy">${reviewCopy}</p>
+                        </div>
+                        <div class="mapping-summary-chips">
+                            <span class="mapping-summary-chip">${state.validation.mappedCount} of ${REQUIRED_FIELDS.length} required fields mapped</span>
+                            <span class="mapping-summary-chip ${state.validation.ready ? "" : "is-warning"}">${state.validation.ready ? "Ready for analysis" : "Incomplete mapping"}</span>
+                        </div>
+                    </div>
+                    <div class="mapping-alert mapping-alert-info">${escapeHtml(sourceLabel)}</div>
+                    <div class="mapping-toolbar">
+                        <div class="mapping-toolbar-copy">${escapeHtml(toolbarCopy)}</div>
+                        <div class="mapping-toolbar-actions">
+                            <button type="button" class="secondary-btn mapping-toolbar-btn" data-qc-action="clear-mappings">Clear selections</button>
+                        </div>
+                    </div>
+                    ${!state.headers.length ? '<div class="mapping-alert mapping-alert-error">No parsed columns are available for this entry set. Go back and add pricing rows.</div>' : ""}
+                    <section class="mapping-section">
+                        <div class="mapping-section-head">
+                            <div>
+                                <div class="mapping-section-title">Required mappings</div>
+                                <div class="mapping-section-copy">These six fields must be mapped uniquely before analysis can begin.</div>
+                            </div>
+                        </div>
+                        <div class="mapping-grid">
+                            ${requiredRows.map((row) => renderMappingRow(row, duplicateColumns)).join("")}
+                        </div>
+                    </section>
+                    <section class="mapping-section">
+                        <div class="mapping-section-head">
+                            <div>
+                                <div class="mapping-section-title">Optional context</div>
+                                <div class="mapping-section-copy">Use these only when payment terms, delivery timing, currency, or notes should add context to the sourcing decision.</div>
+                            </div>
+                        </div>
+                        <div class="mapping-grid">
+                            ${optionalRows.map((row) => renderMappingRow(row, duplicateColumns)).join("") || '<div class="decision-list-empty">No optional fields were detected for this entry set.</div>'}
+                        </div>
+                    </section>
+                    ${missingText || duplicateText ? `<div class="mapping-alert mapping-alert-error">${escapeHtml(`${missingText} ${duplicateText}`.trim())}</div>` : ""}
+                    ${renderStatus(state)}
+                    <div class="qc2-actions">
+                        <button type="button" class="secondary-btn" data-qc-action="back-review">Back</button>
+                        <button type="button" class="action-btn" data-qc-action="start-analysis" ${state.validation.ready && !state.isSubmitting ? "" : "disabled"}>${state.isSubmitting ? "Starting..." : "Start Analysis"}</button>
+                    </div>
+                </div>
+            </section>
+        `;
+    }
+
+    function renderManualDraftCell(row, index, field) {
+        const value = row?.[field.key] ?? "";
+        const missingFields = getManualRowMissingFields(row);
+        const isInvalid = !isManualDraftRowBlank(row) && missingFields.includes(field.key);
+        const attrs = [];
+        if (field.min != null) attrs.push(`min="${escapeHtml(field.min)}"`);
+        if (field.step != null) attrs.push(`step="${escapeHtml(field.step)}"`);
+        return `
+            <td class="${field.required ? "is-required" : "is-optional"}">
+                <label class="qc2-manual-entry-cell">
+                    <span class="qc2-manual-entry-mobile-label">${escapeHtml(field.label)}${field.required ? " *" : ""}</span>
+                    <input
+                        class="recipe-input qc2-manual-entry-input ${isInvalid ? "is-invalid" : ""}"
+                        type="${field.type}"
+                        ${attrs.join(" ")}
+                        data-manual-field="${field.key}"
+                        data-index="${index}"
+                        value="${escapeHtml(value)}"
+                        aria-label="${escapeHtml(field.label)}"
+                        ${isInvalid ? 'aria-invalid="true"' : ""}
+                    >
+                </label>
+            </td>
+        `;
+    }
+
+    function renderManualDraftRow(row, index) {
+        const missingFields = getManualRowMissingFields(row);
+        const showInlineFeedback = !isManualDraftRowBlank(row) && missingFields.length > 0;
+        return `
+            <tr class="${showInlineFeedback ? "is-incomplete" : ""}" data-manual-row="${index}">
+                <td class="qc2-manual-entry-row-index">${index + 1}</td>
+                ${MANUAL_REBUILD_FIELDS.map((field) => renderManualDraftCell(row, index, field)).join("")}
+                <td class="qc2-manual-entry-row-actions">
+                    <button type="button" class="secondary-btn qc2-remove-row" data-qc-action="remove-manual-row" data-index="${index}" ${index === 0 ? "disabled" : ""}>Remove</button>
+                    <div class="qc2-manual-inline-note" data-qc-manual-row-note ${showInlineFeedback ? "" : "hidden"}>${showInlineFeedback ? `Complete: ${escapeHtml(missingFields.map((fieldKey) => MANUAL_REBUILD_REQUIRED_LABELS[fieldKey]).join(", "))}.` : ""}</div>
+                </td>
+            </tr>
+        `;
+    }
+
+    function renderQcManual(state) {
+        const stats = getManualDraftStats(state);
+        return `
+            <section class="qc2-screen qc2-screen-manual">
+                <div class="qc2-card qc2-upload-card">
+                    <div class="qc2-head qc2-head-compact">
+                        <div class="upload-step">Step 1</div>
+                        <h2 class="qc2-title">Enter pricing data</h2>
+                        <p class="qc2-copy">Enter pricing rows manually using the same fields expected by upload, then continue into the same mapping and analysis workflow.</p>
+                    </div>
+                    <div class="qc2-upload-panel">
+                        <div class="qc2-upload-shell">
+                            <div class="qc2-upload-copy-block">
+                                <div class="qc2-upload-title">Manual entry</div>
+                                <div class="qc2-upload-copy" data-qc-manual-summary>${stats.readyCount} ready rows | ${stats.incompleteCount} incomplete rows</div>
+                                <div class="qc2-upload-note">Required fields mirror upload exactly. Optional fields keep delivery, payment, and validity context attached to each row.</div>
+                            </div>
+                            <div class="qc2-upload-actions">
+                                <button type="button" class="secondary-btn" data-qc-action="add-manual-row">Add Row</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="qc2-manual-entry-shell">
+                        <div class="qc2-manual-entry-scroll">
+                            <table class="quote-compare-table qc2-manual-entry-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        ${MANUAL_REBUILD_FIELDS.map((field) => renderManualDraftHeaderCell(field)).join("")}
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${state.manualRows.map((row, index) => renderManualDraftRow(row, index)).join("")}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="qc2-manual-entry-legend">
+                        <span><strong>Required:</strong> Product Name, Supplier, Unit, Quantity, Unit Price, Date</span>
+                        <span><strong>Optional:</strong> Currency, Delivery Time, Payment Terms, Valid Until, Notes</span>
+                    </div>
+                    ${renderStatus(state)}
+                    <div class="qc2-actions qc2-manual-actions">
+                        <div class="qc2-manual-actions-group">
+                            <button type="button" class="secondary-btn qc2-manual-footer-btn" data-qc-action="back-start">Back</button>
+                            <button type="button" class="secondary-btn qc2-manual-footer-btn" data-qc-action="add-manual-row">Add Row</button>
+                        </div>
+                        <div class="qc2-manual-actions-group qc2-manual-actions-group-end">
+                            <button type="button" class="action-btn qc2-manual-footer-btn qc2-manual-footer-btn-primary" data-qc-action="go-manual-review" ${stats.rowCount ? "" : "disabled"}>Review Columns</button>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -2539,7 +3330,7 @@
     }
 
     function getDecisionCardKey(card) {
-        return `${card.productName}__${card.unit}__${card.currentOffer?.supplier_name || ""}__${card.bestOffer?.supplier_name || ""}`;
+        return `${card.productName}__${card.unit}__${normalizeQuantityContext(card.quantity)}__${card.currentOffer?.supplier_name || ""}__${card.bestOffer?.supplier_name || ""}`;
     }
 
     function getScopedDecisionCardKey(scope, baseKey) {
@@ -2660,9 +3451,16 @@
     }
 
     function getAnalysisFilterResultValue(card) {
-        if (card.hasValidAlternative && card.savingsAmount > 0) return "savings-available";
-        if (card.statusTone === "best") return "already-best";
-        return "no-unit-advantage";
+        if (card.decisionType === "lowest-observed-price-already-used") return "no-immediate-action";
+        return "pricing-opportunities";
+    }
+
+    function normalizeAnalysisTableFilter(filterValue) {
+        if (filterValue === "direct-savings" || filterValue === "another-supplier-lower" || filterValue === "same-supplier-lower" || filterValue === "price-variation") {
+            return "pricing-opportunities";
+        }
+        if (filterValue === "lowest-observed") return "no-immediate-action";
+        return filterValue || "all";
     }
 
     function getDecisionCardScope(cardKey) {
@@ -2679,16 +3477,14 @@
             return summary;
         }, {
             all: 0,
-            "savings-available": 0,
-            "already-best": 0,
-            "no-unit-advantage": 0
+            "pricing-opportunities": 0,
+            "no-immediate-action": 0
         });
-        const activeFilter = state.analysisTableFilter || "all";
+        const activeFilter = normalizeAnalysisTableFilter(state.analysisTableFilter);
         const filters = [
             { value: "all", label: "All results" },
-            { value: "savings-available", label: "Savings available" },
-            { value: "already-best", label: "Already best" },
-            { value: "no-unit-advantage", label: "No unit advantage" }
+            { value: "pricing-opportunities", label: "Pricing opportunities" },
+            { value: "no-immediate-action", label: "No immediate action" }
         ];
         return `
             <div class="qc2-analysis-filterbar" data-qc-analysis-filterbar>
@@ -2724,9 +3520,48 @@
         return OPPORTUNITY_CARD_PALETTE[index % OPPORTUNITY_CARD_PALETTE.length];
     }
 
+    function getTopPricingOpportunityPriority(card) {
+        if (card.hasValidAlternative && card.savingsAmount > 0) return 0;
+        if (card.decisionType === "lower-historical-price-with-current-supplier") return 1;
+        if (card.decisionType === "lower-price-with-another-supplier") return 2;
+        if (card.observedAtDifferentQuantity) return 3;
+        return 4;
+    }
+
+    function getTopPricingOpportunityScore(card) {
+        if (card.hasValidAlternative && card.savingsAmount > 0) {
+            return Number(card.savingsAmount || 0);
+        }
+        return Math.max(
+            Number(card.currentOffer?.unit_price || 0) - Number(card.referenceOffer?.unit_price || 0),
+            0
+        );
+    }
+
+    function getTopPricingOpportunityCards(cards) {
+        return [...(cards || [])]
+            .filter((card) => card.decisionType !== "lowest-observed-price-already-used")
+            .sort((left, right) => {
+                const priorityDelta = getTopPricingOpportunityPriority(left) - getTopPricingOpportunityPriority(right);
+                if (priorityDelta !== 0) return priorityDelta;
+                const scoreDelta = getTopPricingOpportunityScore(right) - getTopPricingOpportunityScore(left);
+                if (scoreDelta !== 0) return scoreDelta;
+                return String(left.productName || "").localeCompare(String(right.productName || ""));
+            })
+            .slice(0, 12);
+    }
+
+    function getSpotlightBadgeLabel(card) {
+        if (card.hasValidAlternative && card.savingsAmount > 0) return "Direct savings";
+        if (card.decisionType === "lower-historical-price-with-current-supplier") return "Current supplier history";
+        if (card.decisionType === "lower-price-with-another-supplier") return "Another supplier lower";
+        if (card.observedAtDifferentQuantity) return "Different quantity";
+        return "Price insight";
+    }
+
     function renderDecisionSpotlightCards(cards, state) {
         if (!cards.length) {
-            return '<div class="decision-list-empty">No savings opportunities are visible in the current quote set.</div>';
+            return '<div class="decision-list-empty">No savings opportunities are visible in the current pricing set.</div>';
         }
         return `
             <div class="qc2-spotlight-panel">
@@ -2775,18 +3610,23 @@
                             <div class="qc2-spotlight-savings-row">
                                 <div>
                                     <div class="qc2-spotlight-savings-value">${escapeHtml(formatCurrency(card.savingsAmount, card.currency))}</div>
-                                    <div class="qc2-spotlight-savings-copy">${escapeHtml(formatPercent(card.savingsPercent))} lower unit price</div>
+                                    <div class="qc2-spotlight-savings-copy">${card.hasValidAlternative ? `${escapeHtml(formatPercent(card.savingsPercent))} lower unit price` : "Insight only"}</div>
                                 </div>
-                                <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
-                                    ${isExpanded ? "Hide table" : "Show table"}
-                                </button>
+                                <div class="qc2-spotlight-actions">
+                                    <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="open-product-summary" data-product-name="${escapeHtml(card.productName)}" data-product-unit="${escapeHtml(card.unit || "")}">
+                                        Price summary
+                                    </button>
+                                    <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
+                                        ${isExpanded ? "Hide table" : "Show table"}
+                                    </button>
+                                </div>
                             </div>
                             <div class="qc2-spotlight-decision ${card.statusTone === "neutral" ? "is-neutral" : ""}">${escapeHtml(card.decisionSentence)}</div>
                             <div class="qc2-spotlight-detail">
                                 <div class="qc2-spotlight-detail-shell">
                                     <div class="qc2-spotlight-detail-grid">
-                                        <section class="qc2-spotlight-detail-group" aria-label="Current offer detail">
-                                            <div class="qc2-spotlight-detail-group-title">Current Offer</div>
+                                        <section class="qc2-spotlight-detail-group" aria-label="Current price detail">
+                                            <div class="qc2-spotlight-detail-group-title">Current Price</div>
                                             <div class="qc2-spotlight-detail-table">
                                                 <div class="qc2-spotlight-detail-row">
                                                     <span class="qc2-spotlight-detail-label">Supplier</span>
@@ -2797,13 +3637,13 @@
                                                     <span class="qc2-spotlight-detail-value">${escapeHtml(formatCurrency(card.currentOffer?.unit_price || 0, card.currency))}</span>
                                                 </div>
                                                 <div class="qc2-spotlight-detail-row">
-                                                    <span class="qc2-spotlight-detail-label">Quote date</span>
+                                                    <span class="qc2-spotlight-detail-label">Price date</span>
                                                     <span class="qc2-spotlight-detail-value">${escapeHtml(formatDate(card.quoteDate))}</span>
                                                 </div>
                                             </div>
                                         </section>
-                                        <section class="qc2-spotlight-detail-group is-highlighted" aria-label="Recommended offer detail">
-                                            <div class="qc2-spotlight-detail-group-title">Recommended Offer</div>
+                                        <section class="qc2-spotlight-detail-group is-highlighted" aria-label="Recommended price detail">
+                                            <div class="qc2-spotlight-detail-group-title">Recommended Price</div>
                                             <div class="qc2-spotlight-detail-table">
                                                 <div class="qc2-spotlight-detail-row">
                                                     <span class="qc2-spotlight-detail-label">Supplier</span>
@@ -2814,7 +3654,7 @@
                                                     <span class="qc2-spotlight-detail-value">${escapeHtml(formatCurrency(card.bestOffer?.unit_price || 0, card.currency))}</span>
                                                 </div>
                                                 <div class="qc2-spotlight-detail-row">
-                                                    <span class="qc2-spotlight-detail-label">Quote date</span>
+                                                    <span class="qc2-spotlight-detail-label">Price date</span>
                                                     <span class="qc2-spotlight-detail-value">${escapeHtml(formatDate(card.bestOffer?.quote_date || card.quoteDate))}</span>
                                                 </div>
                                             </div>
@@ -2852,21 +3692,260 @@
         `;
     }
 
+    function renderDecisionSpotlightCards(cards, state) {
+        if (!cards.length) {
+            return '<div class="decision-list-empty">No immediate pricing opportunities found. Review full table for detailed price insights.</div>';
+        }
+        return `
+            <div class="qc2-spotlight-panel">
+                <div class="qc2-spotlight-panel-scroll">
+                    <div class="qc2-spotlight-grid">
+                ${cards.map((card, index) => {
+                    const theme = getOpportunityCardTheme(index);
+                    const cardKey = getScopedDecisionCardKey("spotlight", getDecisionCardKey(card));
+                    const isExpanded = Boolean(state.collapsedDecisionCards[cardKey]);
+                    const badgeLabel = getSpotlightBadgeLabel(card);
+                    return `
+                        <article
+                            class="qc2-spotlight-card ${isExpanded ? "is-expanded" : ""}"
+                            data-qc-card-key="${escapeHtml(cardKey)}"
+                            style="
+                                --qc2-card-border:${theme.border};
+                                --qc2-card-glow:${theme.glow};
+                                --qc2-card-badge-bg:${theme.badgeBg};
+                                --qc2-card-badge-text:${theme.badgeText};
+                                --qc2-card-lane-border:${theme.laneBorder};
+                                --qc2-card-best-border:${theme.laneBestBorder};
+                                --qc2-card-decision-bg:${theme.decisionBg};
+                                --qc2-card-decision-border:${theme.decisionBorder};
+                                --qc2-card-savings-text:${theme.savingsText};
+                            "
+                        >
+                            <div class="qc2-spotlight-card-head">
+                                <div>
+                                    <div class="qc2-spotlight-title">${escapeHtml(card.productName)}</div>
+                                    <div class="qc2-spotlight-meta">${escapeHtml(card.statusLabel)} | ${escapeHtml(card.unit || "Unit not provided")} | Qty ${escapeHtml(String(card.quantity || 0))}</div>
+                                </div>
+                                <span class="qc2-spotlight-badge">${escapeHtml(badgeLabel)}</span>
+                            </div>
+                            <div class="qc2-spotlight-compare">
+                                <div class="qc2-spotlight-lane is-current">
+                                    <div class="qc2-spotlight-label">Current unit price</div>
+                                    <div class="qc2-spotlight-supplier">${escapeHtml(card.currentOffer?.supplier_name || "Supplier missing")}</div>
+                                    <div class="qc2-spotlight-value">${escapeHtml(formatCurrency(card.currentOffer?.unit_price || 0, card.currency))}</div>
+                                    <div class="qc2-spotlight-meta">${escapeHtml(formatDate(card.quoteDate))} | Qty ${escapeHtml(String(card.currentOffer?.quantity || card.quantity || 0))}</div>
+                                </div>
+                                <div class="qc2-spotlight-arrow">-&gt;</div>
+                                <div class="qc2-spotlight-lane is-best">
+                                    <div class="qc2-spotlight-label">${escapeHtml(card.referenceOfferLabel || "Reference price")}</div>
+                                    <div class="qc2-spotlight-supplier">${escapeHtml(card.referenceOffer?.supplier_name || "Supplier missing")}</div>
+                                    <div class="qc2-spotlight-value">${escapeHtml(formatCurrency(card.referenceOffer?.unit_price || 0, card.currency))}</div>
+                                    <div class="qc2-spotlight-meta">${escapeHtml(formatDate(card.referenceOffer?.quote_date || card.quoteDate))} | Qty ${escapeHtml(String(card.referenceOffer?.quantity || 0))}</div>
+                                </div>
+                            </div>
+                            <div class="qc2-spotlight-savings-row">
+                                <div>
+                                    <div class="qc2-spotlight-savings-value">${card.hasValidAlternative ? escapeHtml(formatCurrency(card.savingsAmount, card.currency)) : escapeHtml(formatCurrency(card.referenceOffer?.unit_price || 0, card.currency))}</div>
+                                    <div class="qc2-spotlight-savings-copy">${card.hasValidAlternative ? `${escapeHtml(formatPercent(card.savingsPercent))} direct savings` : escapeHtml(card.quantityContextNote || "Insight only")}</div>
+                                    ${card.hasPotentialSavings ? `
+                                        <div class="qc2-spotlight-potential">
+                                            <span class="qc2-spotlight-potential-label">Potential savings</span>
+                                            <span class="qc2-spotlight-potential-value">${escapeHtml(formatCurrency(card.potentialSavingsAmount, card.currency))}</span>
+                                        </div>
+                                        ${card.potentialSavingsObservedAtDifferentQuantity ? '<div class="qc2-spotlight-potential-note">Estimated based on price observed at different quantity</div>' : ""}
+                                    ` : ""}
+                                </div>
+                                <div class="qc2-spotlight-actions">
+                                    <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="open-product-summary" data-product-name="${escapeHtml(card.productName)}" data-product-unit="${escapeHtml(card.unit || "")}">
+                                        View summary
+                                    </button>
+                                    <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
+                                        ${isExpanded ? "Hide table" : "Show table"}
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="qc2-spotlight-decision ${card.statusTone === "neutral" ? "is-neutral" : ""}">${escapeHtml(card.decisionSentence)}</div>
+                            <div class="qc2-spotlight-detail">
+                                <div class="qc2-spotlight-detail-shell">
+                                    <div class="qc2-spotlight-detail-grid">
+                                        <section class="qc2-spotlight-detail-group" aria-label="Current price detail">
+                                            <div class="qc2-spotlight-detail-group-title">Current Price</div>
+                                            <div class="qc2-spotlight-detail-table">
+                                                <div class="qc2-spotlight-detail-row">
+                                                    <span class="qc2-spotlight-detail-label">Supplier</span>
+                                                    <span class="qc2-spotlight-detail-value">${escapeHtml(card.currentOffer?.supplier_name || "Supplier missing")}</span>
+                                                </div>
+                                                <div class="qc2-spotlight-detail-row">
+                                                    <span class="qc2-spotlight-detail-label">Unit price</span>
+                                                    <span class="qc2-spotlight-detail-value">${escapeHtml(formatCurrency(card.currentOffer?.unit_price || 0, card.currency))}</span>
+                                                </div>
+                                                <div class="qc2-spotlight-detail-row">
+                                                    <span class="qc2-spotlight-detail-label">Price date</span>
+                                                    <span class="qc2-spotlight-detail-value">${escapeHtml(formatDate(card.quoteDate))}</span>
+                                                </div>
+                                            </div>
+                                        </section>
+                                        <section class="qc2-spotlight-detail-group is-highlighted" aria-label="Reference price detail">
+                                            <div class="qc2-spotlight-detail-group-title">Reference Price</div>
+                                            <div class="qc2-spotlight-detail-table">
+                                                <div class="qc2-spotlight-detail-row">
+                                                    <span class="qc2-spotlight-detail-label">Supplier</span>
+                                                    <span class="qc2-spotlight-detail-value">${escapeHtml(card.referenceOffer?.supplier_name || "Supplier missing")}</span>
+                                                </div>
+                                                <div class="qc2-spotlight-detail-row">
+                                                    <span class="qc2-spotlight-detail-label">Unit price</span>
+                                                    <span class="qc2-spotlight-detail-value">${escapeHtml(formatCurrency(card.referenceOffer?.unit_price || 0, card.currency))}</span>
+                                                </div>
+                                                <div class="qc2-spotlight-detail-row">
+                                                    <span class="qc2-spotlight-detail-label">Price date</span>
+                                                    <span class="qc2-spotlight-detail-value">${escapeHtml(formatDate(card.referenceOffer?.quote_date || card.quoteDate))}</span>
+                                                </div>
+                                            </div>
+                                        </section>
+                                        <section class="qc2-spotlight-detail-group" aria-label="Opportunity detail">
+                                            <div class="qc2-spotlight-detail-group-title">Opportunity Snapshot</div>
+                                            <div class="qc2-spotlight-detail-table">
+                                                <div class="qc2-spotlight-detail-row">
+                                                    <span class="qc2-spotlight-detail-label">Opportunity type</span>
+                                                    <span class="qc2-spotlight-detail-value">${escapeHtml(card.statusLabel)}</span>
+                                                </div>
+                                                <div class="qc2-spotlight-detail-row">
+                                                    <span class="qc2-spotlight-detail-label">Current vs reference</span>
+                                                    <span class="qc2-spotlight-detail-value">${escapeHtml(formatCurrency(card.currentOffer?.unit_price || 0, card.currency))} vs ${escapeHtml(formatCurrency(card.referenceOffer?.unit_price || 0, card.currency))}</span>
+                                                </div>
+                                                <div class="qc2-spotlight-detail-row">
+                                                    <span class="qc2-spotlight-detail-label">Context</span>
+                                                    <span class="qc2-spotlight-detail-value">${escapeHtml(card.quantityContextNote || "Observed context available")}</span>
+                                                </div>
+                                            </div>
+                                        </section>
+                                        <section class="qc2-spotlight-detail-group qc2-spotlight-detail-group-notes" aria-label="Decision guidance detail">
+                                            <div class="qc2-spotlight-detail-group-title">Decision Guidance</div>
+                                            <div class="qc2-spotlight-detail-note">${escapeHtml(card.decisionSentence)}</div>
+                                        </section>
+                                    </div>
+                                </div>
+                            </div>
+                        </article>
+                    `;
+                }).join("")}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function getAnalysisDecisionCards(state) {
+        return getAnalysisSummary(state.analysisResult || { comparison: { bids: [] } }).decisionCards || [];
+    }
+
+    function findProductSummaryCard(state, productName, unit) {
+        const cards = getAnalysisDecisionCards(state)
+            .filter((card) => card.productName === productName && String(card.unit || "") === String(unit || ""));
+        if (!cards.length) return null;
+        return [...cards].sort((left, right) => compareOffersByRecency(left.currentOffer || {}, right.currentOffer || {}))[0] || cards[0];
+    }
+
+    function openProductSummary(state, productName, unit) {
+        const card = findProductSummaryCard(state, productName, unit);
+        if (!card?.productSummary) return false;
+        state.productSummaryModalOpen = true;
+        state.productSummaryModalData = {
+            productName: card.productName,
+            unit: card.unit || "",
+            currentOffer: card.currentOffer || null,
+            productSummary: card.productSummary
+        };
+        return true;
+    }
+
+    function closeProductSummary(state) {
+        state.productSummaryModalOpen = false;
+        state.productSummaryModalData = null;
+    }
+
+    function renderProductSummaryDrawer(state) {
+        if (!state.productSummaryModalOpen || !state.productSummaryModalData?.productSummary) return "";
+        const { productName, unit, currentOffer, productSummary } = state.productSummaryModalData;
+        const {
+            lowestObservedOffer,
+            highestObservedOffer,
+            latestObservedOffer,
+            earliestObservedOffer,
+            averageObservedUnitPrice,
+            supplierCount,
+            offers
+        } = productSummary;
+        const currency = lowestObservedOffer?.currency || currentOffer?.currency || "USD";
+        const currentVsLowestUnitGap = Math.max(Number(currentOffer?.unit_price || 0) - Number(lowestObservedOffer?.unit_price || 0), 0);
+        const currentVsLowestPercent = Number(currentOffer?.unit_price || 0)
+            ? (currentVsLowestUnitGap / Number(currentOffer?.unit_price || 0)) * 100
+            : 0;
+        const summaryInsights = [
+            lowestObservedOffer
+                ? `Best recorded price: ${formatCurrency(lowestObservedOffer.unit_price || 0, lowestObservedOffer.currency || currency)} from ${lowestObservedOffer.supplier_name || "Supplier missing"} on ${formatDate(lowestObservedOffer.quote_date)} at quantity ${Number(lowestObservedOffer.quantity || 0)}.`
+                : "Best recorded price is not available.",
+            highestObservedOffer
+                ? `Highest observed price: ${formatCurrency(highestObservedOffer.unit_price || 0, highestObservedOffer.currency || currency)} from ${highestObservedOffer.supplier_name || "Supplier missing"} on ${formatDate(highestObservedOffer.quote_date)}.`
+                : "Highest observed price is not available.",
+            currentOffer && lowestObservedOffer
+                ? currentVsLowestUnitGap > 0
+                    ? `${currentOffer.supplier_name || "Current supplier"} is ${formatCurrency(currentVsLowestUnitGap, currentOffer.currency || currency)} per unit above the best recorded price (${formatPercent(currentVsLowestPercent)} gap).`
+                    : `${currentOffer.supplier_name || "Current supplier"} is already at the best recorded unit price for this product.`
+                : "Current supplier comparison is not available."
+        ];
+
+        return `
+            <div class="qc2-product-summary-backdrop" data-qc-product-summary-close></div>
+            <aside class="qc2-product-summary-drawer" role="dialog" aria-modal="true" aria-label="${escapeHtml(`${productName} ${unit} price summary`)}">
+                <div class="qc2-product-summary-head">
+                    <div>
+                        <div class="mapping-section-title">${escapeHtml(productName)}</div>
+                        <div class="mapping-section-copy">Unit: ${escapeHtml(unit || "Unit missing")} | ${offers.length} observed records | ${supplierCount} suppliers</div>
+                    </div>
+                    <button type="button" class="secondary-btn" data-qc-product-summary-close="true" aria-label="Close price summary">Close</button>
+                </div>
+                <div class="qc2-product-summary-kpis">
+                    <article class="summary-card qc2-product-summary-kpi"><div class="summary-card-title">Best Unit Price</div><div class="summary-card-value compact">${lowestObservedOffer ? escapeHtml(formatCurrency(lowestObservedOffer.unit_price || 0, lowestObservedOffer.currency || currency)) : "--"}</div><div class="summary-card-insight">${escapeHtml(lowestObservedOffer?.supplier_name || "Supplier missing")} | Qty ${escapeHtml(String(lowestObservedOffer?.quantity || 0))}</div></article>
+                    <article class="summary-card qc2-product-summary-kpi"><div class="summary-card-title">Highest Unit Price</div><div class="summary-card-value compact">${highestObservedOffer ? escapeHtml(formatCurrency(highestObservedOffer.unit_price || 0, highestObservedOffer.currency || currency)) : "--"}</div><div class="summary-card-insight">${escapeHtml(highestObservedOffer?.supplier_name || "Supplier missing")}</div></article>
+                    <article class="summary-card qc2-product-summary-kpi"><div class="summary-card-title">Latest Unit Price</div><div class="summary-card-value compact">${latestObservedOffer ? escapeHtml(formatCurrency(latestObservedOffer.unit_price || 0, latestObservedOffer.currency || currency)) : "--"}</div><div class="summary-card-insight">${escapeHtml(formatDate(latestObservedOffer?.quote_date))}</div></article>
+                    <article class="summary-card qc2-product-summary-kpi"><div class="summary-card-title">Earliest Unit Price</div><div class="summary-card-value compact">${earliestObservedOffer ? escapeHtml(formatCurrency(earliestObservedOffer.unit_price || 0, earliestObservedOffer.currency || currency)) : "--"}</div><div class="summary-card-insight">${escapeHtml(formatDate(earliestObservedOffer?.quote_date))}</div></article>
+                    <article class="summary-card qc2-product-summary-kpi"><div class="summary-card-title">Average Unit Price</div><div class="summary-card-value compact">${escapeHtml(formatCurrency(averageObservedUnitPrice || 0, currency))}</div><div class="summary-card-insight">Across all observed records</div></article>
+                    <article class="summary-card qc2-product-summary-kpi"><div class="summary-card-title">Current vs Best</div><div class="summary-card-value compact">${currentOffer && lowestObservedOffer ? escapeHtml(formatCurrency(currentVsLowestUnitGap, currency)) : "--"}</div><div class="summary-card-insight">${currentOffer && lowestObservedOffer ? (currentVsLowestUnitGap > 0 ? `${escapeHtml(formatPercent(currentVsLowestPercent))} above best` : "Matches best recorded price") : "Current comparison unavailable"}</div></article>
+                </div>
+                <div class="qc2-product-summary-insights">
+                    ${summaryInsights.map((insight) => `<div class="qc2-product-summary-insight">${escapeHtml(insight)}</div>`).join("")}
+                </div>
+                <div class="qc2-product-summary-timeline">
+                    ${offers.map((offer) => `
+                        <div class="qc2-product-summary-item ${lowestObservedOffer && isSameOffer(offer, lowestObservedOffer) ? "is-highlighted" : ""}">
+                            <div class="qc2-product-summary-item-head">
+                                <span>${escapeHtml(formatDate(offer.quote_date))}</span>
+                                <span>${escapeHtml(offer.supplier_name || "Supplier missing")}</span>
+                            </div>
+                            <div class="qc2-product-summary-item-copy">Qty ${escapeHtml(String(offer.quantity || 0))} | Unit ${escapeHtml(formatCurrency(offer.unit_price || 0, offer.currency || currency))} | Total ${escapeHtml(formatCurrency(offer.total_price || 0, offer.currency || currency))}</div>
+                        </div>
+                    `).join("")}
+                </div>
+            </aside>
+        `;
+    }
+
     function renderAnalyzeRows(cards, state) {
         if (!cards.length) {
             return '<div class="decision-list-empty">No supplier rows were available for comparison.</div>';
         }
         return `
-            <div class="qc2-analysis-table">
-                <div class="qc2-analysis-table-head">
-                    <span>Product</span>
-                    <span>Current Supplier</span>
-                    <span>Current Price</span>
-                    <span>Best Supplier</span>
-                    <span>Best Price</span>
-                    <span>Savings</span>
-                    <span>Result</span>
-                    <span class="qc2-analysis-expand-col">Details</span>
+            <div class="qc2-analysis-table qc2-full-table-v3">
+                <div class="qc2-analysis-table-head qc2-ft-head qc2-ft-grid" role="row">
+                    <span class="qc2-ft-head-cell qc2-ft-head-cell--product" role="columnheader">Product</span>
+                    <span class="qc2-ft-head-cell" role="columnheader">Current Supplier</span>
+                    <span class="qc2-ft-head-cell qc2-ft-head-cell--price" role="columnheader">Current Price</span>
+                    <span class="qc2-ft-head-cell" role="columnheader">Reference Supplier</span>
+                    <span class="qc2-ft-head-cell qc2-ft-head-cell--price" role="columnheader">Reference Price</span>
+                    <span class="qc2-ft-head-cell qc2-ft-head-cell--savings" role="columnheader">Savings</span>
+                    <span class="qc2-ft-head-cell qc2-ft-head-cell--result" role="columnheader">Result</span>
+                    <span class="qc2-ft-head-cell qc2-ft-head-cell--details" role="columnheader">Details</span>
                 </div>
                 ${cards.map((card, rowIndex) => {
                     const cardKey = getScopedDecisionCardKey("analysis", getDecisionCardKey(card));
@@ -2875,16 +3954,21 @@
                     const searchText = [
                         card.productName,
                         card.currentOffer?.supplier_name,
-                        card.bestOffer?.supplier_name
+                        card.referenceOffer?.supplier_name
                     ].filter(Boolean).join(" ").toLowerCase();
                     const supplierSearchText = [
                         card.currentOffer?.supplier_name,
-                        card.bestOffer?.supplier_name
+                        card.referenceOffer?.supplier_name
                     ].filter(Boolean).join(" ").toLowerCase();
-                    const isNoUnitAdvantage = resultValue === "no-unit-advantage";
+                    const hasDirectSavings = card.hasValidAlternative && Number(card.savingsAmount || 0) > 0;
+                    const statusToneClass = card.statusTone === "best"
+                        ? "qc2-ft-result__badge--best"
+                        : card.statusTone === "neutral"
+                            ? "qc2-ft-result__badge--neutral"
+                            : "qc2-ft-result__badge--opportunity";
                     return `
                     <article
-                        class="qc2-analysis-row ${isExpanded ? "is-expanded" : ""} ${state.selectedAnalysisRowKey === cardKey ? "is-selected" : ""}"
+                        class="qc2-analysis-row qc2-ft-row ${isExpanded ? "is-expanded" : ""} ${state.selectedAnalysisRowKey === cardKey ? "is-selected" : ""}"
                         data-qc-analysis-row
                         data-qc-analysis-card-key="${escapeHtml(cardKey)}"
                         data-result="${escapeHtml(resultValue)}"
@@ -2895,85 +3979,112 @@
                         data-product-name="${escapeHtml(card.productName)}"
                         data-product-unit="${escapeHtml(card.unit || "")}"
                     >
-                        <div class="qc2-analysis-row-main">
-                            <div class="qc2-analysis-cell qc2-analysis-cell-product">
-                                <div class="qc2-analysis-product">${escapeHtml(card.productName)}</div>
-                                <div class="qc2-analysis-sub">${escapeHtml(card.unit || "Unit not provided")} | Qty ${escapeHtml(String(card.quantity || 0))}</div>
+                        <div class="qc2-analysis-row-main qc2-ft-row-main qc2-ft-grid" role="row">
+                            <div class="qc2-analysis-cell qc2-analysis-cell-product qc2-ft-cell qc2-ft-cell--product" role="gridcell">
+                                <div class="qc2-ft-stack">
+                                    <div class="qc2-ft-primary qc2-ft-product" title="${escapeHtml(card.productName)}">${escapeHtml(card.productName)}</div>
+                                    <div class="qc2-ft-meta">${escapeHtml(card.unit || "Unit not provided")} | Qty ${escapeHtml(String(card.quantity || 0))}</div>
+                                </div>
                             </div>
-                            <div class="qc2-analysis-cell qc2-analysis-cell-supplier">
-                                <div class="qc2-analysis-value qc2-analysis-supplier">${escapeHtml(card.currentOffer?.supplier_name || "Supplier missing")}</div>
-                                <div class="qc2-analysis-sub">${escapeHtml(formatDate(card.quoteDate))}</div>
+                            <div class="qc2-analysis-cell qc2-ft-cell qc2-ft-cell--supplier" role="gridcell">
+                                <div class="qc2-ft-stack">
+                                    <div class="qc2-ft-primary qc2-ft-supplier" title="${escapeHtml(card.currentOffer?.supplier_name || "Supplier missing")}">${escapeHtml(card.currentOffer?.supplier_name || "Supplier missing")}</div>
+                                    <div class="qc2-ft-meta">${escapeHtml(formatDate(card.quoteDate))}</div>
+                                </div>
                             </div>
-                            <div class="qc2-analysis-cell qc2-analysis-cell-price">
-                                <div class="qc2-analysis-value qc2-analysis-price">${escapeHtml(formatCurrency(card.currentOffer?.total_price || 0, card.currency))}</div>
-                                <div class="qc2-analysis-sub">${escapeHtml(formatCurrency(card.currentOffer?.unit_price || 0, card.currency))} unit</div>
+                            <div class="qc2-analysis-cell qc2-ft-cell qc2-ft-cell--price" role="gridcell">
+                                <div class="qc2-ft-stack">
+                                    <div class="qc2-ft-primary qc2-ft-money">${escapeHtml(formatCurrency(card.currentOffer?.total_price || 0, card.currency))}</div>
+                                    <div class="qc2-ft-meta">${escapeHtml(formatCurrency(card.currentOffer?.unit_price || 0, card.currency))} unit</div>
+                                </div>
                             </div>
-                            <div class="qc2-analysis-cell qc2-analysis-cell-supplier">
-                                <div class="qc2-analysis-value qc2-analysis-supplier">${escapeHtml(card.bestOffer?.supplier_name || "Supplier missing")}</div>
-                                <div class="qc2-analysis-sub">${escapeHtml(card.bestOffer?.payment_term || "Best price reference")}</div>
+                            <div class="qc2-analysis-cell qc2-ft-cell qc2-ft-cell--supplier" role="gridcell">
+                                <div class="qc2-ft-stack">
+                                    <div class="qc2-ft-primary qc2-ft-supplier" title="${escapeHtml(card.referenceOffer?.supplier_name || "Supplier missing")}">${escapeHtml(card.referenceOffer?.supplier_name || "Supplier missing")}</div>
+                                    <div class="qc2-ft-meta">${escapeHtml(card.referenceOfferLabel || "Reference price")}</div>
+                                </div>
                             </div>
-                            <div class="qc2-analysis-cell qc2-analysis-cell-price">
-                                <div class="qc2-analysis-value qc2-analysis-price">${escapeHtml(formatCurrency(card.bestOffer?.total_price || 0, card.currency))}</div>
-                                <div class="qc2-analysis-sub">${escapeHtml(formatCurrency(card.bestOffer?.unit_price || 0, card.currency))} unit</div>
+                            <div class="qc2-analysis-cell qc2-ft-cell qc2-ft-cell--price" role="gridcell">
+                                <div class="qc2-ft-stack">
+                                    <div class="qc2-ft-primary qc2-ft-money">${escapeHtml(formatCurrency(card.referenceOffer?.total_price || 0, card.currency))}</div>
+                                    <div class="qc2-ft-meta">${escapeHtml(formatCurrency(card.referenceOffer?.unit_price || 0, card.currency))} unit</div>
+                                </div>
                             </div>
-                            <div class="qc2-analysis-cell qc2-analysis-cell-savings">
-                                ${isNoUnitAdvantage ? `
-                                    <div class="qc2-analysis-neutral-value">--</div>
+                            <div class="qc2-analysis-cell qc2-ft-cell qc2-ft-cell--savings" role="gridcell">
+                                ${!hasDirectSavings ? `
+                                    <div class="qc2-ft-neutral-value">--</div>
                                 ` : `
-                                    <div class="qc2-analysis-savings ${!card.hasValidAlternative ? "is-neutral" : ""}">${card.hasValidAlternative ? escapeHtml(formatCurrency(card.savingsAmount, card.currency)) : "--"}</div>
-                                    <div class="qc2-analysis-sub">${card.hasValidAlternative ? escapeHtml(formatPercent(card.savingsPercent)) : escapeHtml(card.statusTone === "best" ? "Current supplier already leads" : "No lower unit price")}</div>
+                                    <div class="qc2-ft-savings-pill">${escapeHtml(formatCurrency(card.savingsAmount, card.currency))}</div>
+                                    <div class="qc2-ft-meta">${escapeHtml(formatPercent(card.savingsPercent))}</div>
                                 `}
                             </div>
-                            <div class="qc2-analysis-cell qc2-analysis-cell-result">
-                                <span class="qc2-analysis-result ${card.statusTone === "best" ? "is-best" : card.statusTone === "neutral" ? "is-neutral" : "is-opportunity"}">${escapeHtml(card.statusLabel)}</span>
-                                ${isNoUnitAdvantage ? '<div class="qc2-analysis-result-helper">No better supplier found</div>' : ""}
+                            <div class="qc2-analysis-cell qc2-analysis-cell-result qc2-ft-cell qc2-ft-cell--result" role="gridcell">
+                                <div class="qc2-ft-result" aria-label="Result summary">
+                                    <div class="qc2-ft-result__badge-zone">
+                                        <div class="qc2-ft-result__badge ${statusToneClass}" title="${escapeHtml(card.resultBadgeTooltip || card.statusLabel || "")}">${escapeHtml(card.statusLabel)}</div>
+                                    </div>
+                                    <div class="qc2-ft-result__helper-zone">
+                                        <div class="qc2-ft-result__helper">${escapeHtml(hasDirectSavings ? "Direct savings available" : "No direct savings")}</div>
+                                    </div>
+                                    <div class="qc2-ft-result__insight-zone">
+                                        <div class="qc2-ft-result__insight">${card.compactResultInsight ? escapeHtml(card.compactResultInsight) : ""}</div>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="qc2-analysis-cell qc2-analysis-cell-expand ${card.hasValidAlternative && card.savingsAmount > 0 ? "" : "single-action"}">
-                                ${card.hasValidAlternative && card.savingsAmount > 0 ? `
-                                    <button
-                                        type="button"
-                                        class="secondary-btn qc2-collapse-btn qc2-analysis-history-btn"
-                                        data-qc-action="see-history-offers"
-                                        data-product-name="${escapeHtml(card.productName)}"
-                                        data-product-unit="${escapeHtml(card.unit || "")}"
-                                    >
-                                        See offers
-                                    </button>
-                                    <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
-                                        ${isExpanded ? "Close table" : "Open table"}
-                                    </button>
-                                ` : `
-                                    <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
-                                        ${isExpanded ? "Close table" : "Open table"}
-                                    </button>
-                                `}
+                            <div class="qc2-analysis-cell qc2-analysis-cell-expand qc2-ft-cell qc2-ft-cell--details ${card.hasValidAlternative && card.savingsAmount > 0 ? "" : "single-action"}" role="gridcell">
+                                <div class="qc2-ft-actions">
+                                    ${card.hasValidAlternative && card.savingsAmount > 0 ? `
+                                        <button
+                                            type="button"
+                                            class="secondary-btn qc2-collapse-btn qc2-analysis-history-btn"
+                                            data-qc-action="see-history-offers"
+                                            data-product-name="${escapeHtml(card.productName)}"
+                                            data-product-unit="${escapeHtml(card.unit || "")}"
+                                        >
+                                            See history
+                                        </button>
+                                        <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="open-product-summary" data-product-name="${escapeHtml(card.productName)}" data-product-unit="${escapeHtml(card.unit || "")}">
+                                            Price summary
+                                        </button>
+                                        <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
+                                            ${isExpanded ? "Close table" : "Open table"}
+                                        </button>
+                                    ` : `
+                                        <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="open-product-summary" data-product-name="${escapeHtml(card.productName)}" data-product-unit="${escapeHtml(card.unit || "")}">
+                                            Price summary
+                                        </button>
+                                        <button type="button" class="secondary-btn qc2-collapse-btn" data-qc-action="toggle-decision-card" data-card-key="${escapeHtml(cardKey)}" aria-expanded="${isExpanded ? "true" : "false"}">
+                                            ${isExpanded ? "Close table" : "Open table"}
+                                        </button>
+                                    `}
+                                </div>
                             </div>
                         </div>
-                        <div class="qc2-analysis-row-detail">
-                            <div class="qc2-analysis-detail-grid">
-                                <div class="qc2-analysis-detail-item">
-                                    <span class="qc2-analysis-detail-label">Quote Date</span>
+                        <div class="qc2-analysis-row-detail qc2-ft-detail-panel">
+                            <div class="qc2-analysis-detail-grid qc2-ft-detail-grid">
+                                <div class="qc2-analysis-detail-item qc2-ft-detail-card">
+                                    <span class="qc2-analysis-detail-label">Price Date</span>
                                     <span class="qc2-analysis-detail-value">${escapeHtml(formatDate(card.quoteDate))}</span>
                                 </div>
-                                <div class="qc2-analysis-detail-item">
-                                    <span class="qc2-analysis-detail-label">Current Offer</span>
+                                <div class="qc2-analysis-detail-item qc2-ft-detail-card">
+                                    <span class="qc2-analysis-detail-label">Current Price</span>
                                     <span class="qc2-analysis-detail-value">${escapeHtml(card.currentOffer?.supplier_name || "Supplier missing")} | ${escapeHtml(formatCurrency(card.currentOffer?.unit_price || 0, card.currency))} unit</span>
                                 </div>
-                                <div class="qc2-analysis-detail-item">
-                                    <span class="qc2-analysis-detail-label">Best Offer</span>
-                                    <span class="qc2-analysis-detail-value">${escapeHtml(card.bestOffer?.supplier_name || "Supplier missing")} | ${escapeHtml(formatCurrency(card.bestOffer?.unit_price || 0, card.currency))} unit</span>
+                                <div class="qc2-analysis-detail-item qc2-ft-detail-card">
+                                    <span class="qc2-analysis-detail-label">Reference Price</span>
+                                    <span class="qc2-analysis-detail-value">${escapeHtml(card.referenceOffer?.supplier_name || "Supplier missing")} | ${escapeHtml(formatCurrency(card.referenceOffer?.unit_price || 0, card.currency))} unit</span>
                                 </div>
-                                <div class="qc2-analysis-detail-item">
+                                <div class="qc2-analysis-detail-item qc2-ft-detail-card">
                                     <span class="qc2-analysis-detail-label">Commercial Terms</span>
-                                    <span class="qc2-analysis-detail-value">${escapeHtml(card.bestOffer?.currency || card.currency || "USD")} | ${escapeHtml(card.bestOffer?.delivery_time || "Delivery not provided")} | ${escapeHtml(card.bestOffer?.payment_term || "Payment terms not provided")}</span>
+                                    <span class="qc2-analysis-detail-value">${escapeHtml(card.referenceOffer?.currency || card.currency || "USD")} | ${escapeHtml(card.referenceOffer?.delivery_time || "Delivery not provided")} | ${escapeHtml(card.referenceOffer?.payment_term || "Payment terms not provided")}</span>
                                 </div>
-                                <div class="qc2-analysis-detail-item">
-                                    <span class="qc2-analysis-detail-label">Offer Validity</span>
-                                    <span class="qc2-analysis-detail-value">${escapeHtml(formatDate(card.bestOffer?.valid_until) || "Not provided")}</span>
+                                <div class="qc2-analysis-detail-item qc2-ft-detail-card">
+                                    <span class="qc2-analysis-detail-label">Price Validity</span>
+                                    <span class="qc2-analysis-detail-value">${escapeHtml(formatDate(card.referenceOffer?.valid_until) || "Not provided")}</span>
                                 </div>
                             </div>
-                            ${(card.currentOffer?.notes || card.bestOffer?.notes) ? `<div class="qc2-analysis-detail-note qc2-analysis-detail-note-secondary">${escapeHtml(card.currentOffer?.notes || card.bestOffer?.notes)}</div>` : ""}
-                            <div class="qc2-analysis-detail-note">${escapeHtml(card.decisionSentence)}</div>
+                            ${(card.currentOffer?.notes || card.referenceOffer?.notes) ? `<div class="qc2-analysis-detail-note qc2-analysis-detail-note-secondary qc2-ft-detail-note">${escapeHtml(card.currentOffer?.notes || card.referenceOffer?.notes)}</div>` : ""}
+                            <div class="qc2-analysis-detail-note qc2-ft-detail-insight">${escapeHtml(card.decisionSentence)}</div>
                         </div>
                     </article>
                 `;
@@ -2996,7 +4107,7 @@
                     <span>Quantity</span>
                     <span>Total</span>
                     <span>Source</span>
-                    <span>Quote Date</span>
+                    <span>Price Date</span>
                     <span class="qc2-analysis-expand-col">Details</span>
                 </div>
                 ${rows.map((row) => {
@@ -3011,7 +4122,7 @@
                             </div>
                             <div class="qc2-analysis-cell">
                                 <div class="qc2-analysis-value">${escapeHtml(row.selectedSupplier || "Supplier missing")}</div>
-                                <div class="qc2-analysis-sub">Best visible offer</div>
+                                <div class="qc2-analysis-sub">Best visible price</div>
                             </div>
                             <div class="qc2-analysis-cell">
                                 <div class="qc2-analysis-value">${escapeHtml(formatCurrency(row.unitPrice || 0, row.currency))}</div>
@@ -3055,12 +4166,13 @@
 
     function renderQcAnalyze(state) {
         const result = state.analysisResult || { comparison: { bids: [] }, evaluation: null, summary: { rowCount: 0, supplierCount: 0, productCount: 0, productsWithSavings: 0, totalVisibleSavings: 0, currentSpend: 0, optimizedSpend: 0, optimizedSavings: 0, optimizedSavingsPercent: 0, optimizedRows: [], decisionCards: [] } };
-        const summary = result.summary || buildAnalyzeSummary(result);
+        const summary = getAnalysisSummary(result);
         const decisionCards = summary.decisionCards || [];
-        const opportunityCards = decisionCards
-            .filter((card) => card.hasValidAlternative && card.savingsAmount > 0)
-            .sort((left, right) => right.savingsAmount - left.savingsAmount)
-            .slice(0, 12);
+        const opportunityCards = getTopPricingOpportunityCards(decisionCards);
+        const totalPotentialSavings = opportunityCards.reduce(
+            (sum, card) => sum + (card.hasPotentialSavings ? Number(card.potentialSavingsAmount || 0) : 0),
+            0
+        );
         const expandedOpportunityCards = opportunityCards.filter((card) => Boolean(state.collapsedDecisionCards[getScopedDecisionCardKey("spotlight", getDecisionCardKey(card))]));
         const comparisonCurrency = result.comparison?.bids?.[0]?.currency || "USD";
         const isOpportunitySectionVisible = state.showOpportunitySection !== false;
@@ -3074,7 +4186,7 @@
                             <div class="qc2-head-copy">
                                 <div class="upload-step">Step 3</div>
                                 <h2 class="qc2-title">Procurement decision screen</h2>
-                                <p class="qc2-copy">See where action is required first, quantify the savings, and only dive into the full comparison when you need more detail.</p>
+                                <p class="qc2-copy">See direct savings first, then review product-level price intelligence so you can spot lower supplier, historical, and quantity-based price patterns.</p>
                             </div>
                         </div>
                     </div>
@@ -3088,9 +4200,9 @@
                     </div>
                     <div class="qc2-summary-grid qc2-summary-grid-compact qc2-summary-grid-hero">
                         <article class="summary-card qc2-summary-card-compact"><div class="summary-card-title">Products analyzed</div><div class="summary-card-value compact">${summary.productCount}</div><div class="summary-card-insight">Visible product groups in this analysis.</div></article>
-                        <article class="summary-card qc2-summary-card-compact"><div class="summary-card-title">Suppliers compared</div><div class="summary-card-value compact">${summary.supplierCount}</div><div class="summary-card-insight">Unique suppliers in the imported quotes.</div></article>
-                        <article class="summary-card qc2-summary-card-compact"><div class="summary-card-title">Savings opportunities</div><div class="summary-card-value compact">${summary.productsWithSavings}</div><div class="summary-card-insight">Products where a better supplier is visible.</div></article>
-                        <article class="summary-card qc2-summary-card-compact is-savings"><div class="summary-card-title">Total potential savings</div><div class="summary-card-value compact">${escapeHtml(formatCurrency(summary.totalVisibleSavings || 0, comparisonCurrency))}</div><div class="summary-card-insight">Immediate savings visible in the imported quotes.</div></article>
+                        <article class="summary-card qc2-summary-card-compact"><div class="summary-card-title">Suppliers compared</div><div class="summary-card-value compact">${summary.supplierCount}</div><div class="summary-card-insight">Unique suppliers in the imported pricing data.</div></article>
+                        <article class="summary-card qc2-summary-card-compact"><div class="summary-card-title">Pricing opportunities</div><div class="summary-card-value compact">${opportunityCards.length}</div><div class="summary-card-insight">Visible actionable pricing opportunity cards in this summary.</div></article>
+                        <article class="summary-card qc2-summary-card-compact is-savings"><div class="summary-card-title">Total potential savings</div><div class="summary-card-value compact">${escapeHtml(formatCurrency(totalPotentialSavings, comparisonCurrency))}</div><div class="summary-card-insight">Sum of the visible potential savings shown in the pricing opportunity cards.</div></article>
                     </div>
                     <div class="qc2-analyze-tab-panels">
                         <div id="qcTabSavings" class="qc2-analyze-tab-panel ${activeAnalyzeTab === "savings" ? "active-tab" : ""}" role="tabpanel" aria-hidden="${activeAnalyzeTab === "savings" ? "false" : "true"}">
@@ -3098,8 +4210,8 @@
                                 ${isOpportunitySectionVisible ? `
                                     <div class="mapping-section-head">
                                         <div>
-                                            <div class="mapping-section-title">Top savings opportunities</div>
-                                            <div class="mapping-section-copy">Review the supplier switches with the biggest savings impact first.</div>
+                                            <div class="mapping-section-title">Top pricing opportunities</div>
+                                            <div class="mapping-section-copy">Review direct savings first, then the strongest supplier, historical, and quantity-based price opportunities that may warrant action.</div>
                                         </div>
                                         <div class="qc2-analysis-section-actions">
                                             <button type="button" class="secondary-btn qc2-section-action-btn" data-qc-action="collapse-all-opportunity-tables">Collapse all tables</button>
@@ -3110,8 +4222,8 @@
                                 ` : `
                                     <button type="button" class="qc2-collapsible-summary qc2-section-summary-btn" data-qc-action="toggle-opportunity-section" aria-expanded="false">
                                         <span>
-                                            <span class="mapping-section-title">Top savings opportunities</span>
-                                            <span class="qc2-collapsible-summary-copy">Top supplier-switch opportunities are hidden from view.</span>
+                                            <span class="mapping-section-title">Top pricing opportunities</span>
+                                            <span class="qc2-collapsible-summary-copy">Top pricing opportunity cards are hidden from view.</span>
                                         </span>
                                         <span class="qc2-collapsible-summary-action">Show section</span>
                                     </button>
@@ -3123,7 +4235,7 @@
                                 <div class="mapping-section-head qc2-analysis-table-headbar">
                                     <div>
                                         <div class="mapping-section-title">Full comparison table</div>
-                                        <div class="mapping-section-copy">Structured all-products savings view across the complete quote set.</div>
+                                        <div class="mapping-section-copy">Structured all-products price intelligence view across the complete pricing set.</div>
                                     </div>
                                     <div class="qc2-analysis-section-actions">
                                         ${shouldRenderFullComparison ? '<button type="button" class="secondary-btn qc2-section-action-btn" data-qc-action="hide-all-details">Hide selections</button>' : ""}
@@ -3144,6 +4256,7 @@
                         </div>
                     </div>
                     ${renderStatus(state)}
+                    <div data-qc-product-summary-modal>${renderProductSummaryDrawer(state)}</div>
                     <div class="qc2-actions qc2-analyze-actions" id="qc2AnalysisLower">
                         <div class="qc2-analyze-actions-slot is-left">
                             <button type="button" class="secondary-btn" data-qc-action="back-review">Back to Review</button>
@@ -3159,7 +4272,7 @@
 
     function renderHistoryTrend(state, rows, { hasHistoryContext = false } = {}) {
         if (!hasHistoryContext) {
-            return '<div class="decision-list-empty">Save supplier quotes to start building product history.</div>';
+            return '<div class="decision-list-empty">Save supplier price records to start building product history.</div>';
         }
         if (!state.historySelectedSeriesKey) {
             return '<div class="decision-list-empty">Select a product to view trend.</div>';
@@ -3168,7 +4281,7 @@
             if (hasHistoryContext) {
                 return '<div class="decision-list-empty">The selected product is outside the current filters.</div>';
             }
-            return '<div class="decision-list-empty">Save supplier quotes to start building product history.</div>';
+            return '<div class="decision-list-empty">Save supplier price records to start building product history.</div>';
         }
         const summary = buildHistorySeriesSummary(rows);
         const prices = rows.map((row) => row.unitPrice);
@@ -3383,7 +4496,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             <article class="summary-card"><div class="summary-card-title">Latest price</div><div class="summary-card-value compact">${summary.latestPrice == null ? "--" : escapeHtml(formatCurrency(summary.latestPrice, currency))}</div><div class="summary-card-insight">Most recent unit price in the selected range.</div></article>
             <article class="summary-card"><div class="summary-card-title">Oldest price</div><div class="summary-card-value compact">${summary.oldestPrice == null ? "--" : escapeHtml(formatCurrency(summary.oldestPrice, currency))}</div><div class="summary-card-insight">Starting unit price in the selected range.</div></article>
             <article class="summary-card"><div class="summary-card-title">Min / Max</div><div class="summary-card-value compact">${summary.minPrice == null ? "--" : `${escapeHtml(formatCurrency(summary.minPrice, currency))} / ${escapeHtml(formatCurrency(summary.maxPrice, currency))}`}</div><div class="summary-card-insight">Lowest and highest unit price in the visible history.</div></article>
-            <article class="summary-card"><div class="summary-card-title">Total change</div><div class="summary-card-value compact">${summary.totalChange == null ? "--" : escapeHtml(formatCurrency(summary.totalChange, currency))}</div><div class="summary-card-insight">${summary.totalChangePercent == null ? "No change percentage available yet." : `${escapeHtml(formatPercent(summary.totalChangePercent))} vs oldest visible quote.`}</div></article>
+            <article class="summary-card"><div class="summary-card-title">Total change</div><div class="summary-card-value compact">${summary.totalChange == null ? "--" : escapeHtml(formatCurrency(summary.totalChange, currency))}</div><div class="summary-card-insight">${summary.totalChangePercent == null ? "No change percentage available yet." : `${escapeHtml(formatPercent(summary.totalChangePercent))} vs oldest visible record.`}</div></article>
         `;
     }
 
@@ -3431,9 +4544,9 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
     function renderHistoryTable(state, rows, { hasHistoryContext = false } = {}) {
         if (!rows.length) {
             if (hasHistoryContext) {
-                return '<div class="decision-list-empty">No saved quotes match the selected filters.</div>';
+                return '<div class="decision-list-empty">No saved price records match the selected filters.</div>';
             }
-            return '<div class="decision-list-empty">Save supplier quotes to start building product history.</div>';
+            return '<div class="decision-list-empty">Save supplier price records to start building product history.</div>';
         }
         const visibleColumns = getVisibleHistoryColumns(state);
         return `
@@ -3517,14 +4630,15 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 </div>
                 ${renderHistorySeriesChart(rows)}
                 <div class="qc2-history-detail-kpis">
-                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Latest Unit Price</div><div class="summary-card-value compact">${summary.latestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.latestUnitPrice, rows[rows.length - 1]?.currency || "USD"))}</div></article>
-                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Lowest Unit Price</div><div class="summary-card-value compact">${summary.lowestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.lowestUnitPrice, rows[0]?.currency || "USD"))}</div></article>
-                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Highest Unit Price</div><div class="summary-card-value compact">${summary.highestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.highestUnitPrice, rows[0]?.currency || "USD"))}</div></article>
-                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Net Change</div><div class="summary-card-value compact">${summary.netChange == null ? "--" : escapeHtml(formatCurrency(summary.netChange, rows[rows.length - 1]?.currency || "USD"))}</div></article>
-                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Net Change %</div><div class="summary-card-value compact">${summary.netChangePercent == null ? "--" : escapeHtml(formatPercent(summary.netChangePercent))}</div></article>
-                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Average Unit Price</div><div class="summary-card-value compact">${summary.averageUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.averageUnitPrice, rows[0]?.currency || "USD"))}</div></article>
-                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Movement Count</div><div class="summary-card-value compact">${summary.movementCount}</div></article>
-                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Supplier Count</div><div class="summary-card-value compact">${summary.supplierCount}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Latest Unit Price</div><div class="summary-card-value compact">${summary.latestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.latestUnitPrice, rows[rows.length - 1]?.currency || "USD"))}</div><div class="summary-card-insight">${escapeHtml(summary.latestUnitPriceSupplier || "Supplier missing")}${summary.latestUnitPriceDate ? ` | ${escapeHtml(summary.latestUnitPriceDate)}` : ""}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Highest Unit Price</div><div class="summary-card-value compact">${summary.highestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.highestUnitPrice, rows[0]?.currency || "USD"))}</div><div class="summary-card-insight">${escapeHtml(summary.highestUnitPriceSupplier || "Supplier missing")}${summary.highestUnitPriceDate ? ` | ${escapeHtml(summary.highestUnitPriceDate)}` : ""}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Earliest Unit Price</div><div class="summary-card-value compact">${summary.earliestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.earliestUnitPrice, rows[0]?.currency || "USD"))}</div><div class="summary-card-insight">${escapeHtml(summary.earliestUnitPriceSupplier || "Supplier missing")}${summary.earliestUnitPriceDate ? ` | ${escapeHtml(summary.earliestUnitPriceDate)}` : ""}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Net Change</div><div class="summary-card-value compact">${summary.netChange == null ? "--" : escapeHtml(formatCurrency(summary.netChange, rows[rows.length - 1]?.currency || "USD"))}</div><div class="summary-card-insight">First -> Latest</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Net Change %</div><div class="summary-card-value compact">${summary.netChangePercent == null ? "--" : escapeHtml(formatPercent(summary.netChangePercent))}</div><div class="summary-card-insight">${escapeHtml(summary.firstDate || "--")} -> ${escapeHtml(summary.latestDate || "--")}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Current vs Best</div><div class="summary-card-value compact">${summary.currentVsBestUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.currentVsBestUnitPrice, rows[rows.length - 1]?.currency || "USD"))}</div><div class="summary-card-insight">${escapeHtml(summary.currentVsBestLabel || "Best-price comparison unavailable")}</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Average Unit Price</div><div class="summary-card-value compact">${summary.averageUnitPrice == null ? "--" : escapeHtml(formatCurrency(summary.averageUnitPrice, rows[0]?.currency || "USD"))}</div><div class="summary-card-insight">Across ${escapeHtml(String(summary.movementCount || 0))} records</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Movement Count</div><div class="summary-card-value compact">${summary.movementCount}</div><div class="summary-card-insight">First -> Latest</div></article>
+                    <article class="summary-card qc2-history-detail-kpi"><div class="summary-card-title">Supplier Count</div><div class="summary-card-value compact">${summary.supplierCount}</div><div class="summary-card-insight">${escapeHtml(summary.supplierNames.length ? summary.supplierNames.join(", ") : "Supplier names unavailable")}</div></article>
                 </div>
                 <div class="qc2-history-detail-insights">
                     ${insights.map((insight) => `<div class="qc2-history-detail-insight">${escapeHtml(insight)}</div>`).join("")}
@@ -3532,10 +4646,8 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 <div class="qc2-history-detail-timeline">
                     ${rows.map((row) => `
                         <div class="qc2-history-detail-item">
-                            <div class="qc2-history-detail-item-head">
-                                <span>${escapeHtml(formatDate(row.quoteDate || row.createdAt))}</span>
-                                <span>${escapeHtml(row.supplier || "Supplier missing")}</span>
-                            </div>
+                            <div class="qc2-history-detail-item-date">${escapeHtml(formatDate(row.quoteDate || row.createdAt))}</div>
+                            <div class="qc2-history-detail-item-supplier">${escapeHtml(row.supplier || "Supplier missing")}</div>
                             <div class="qc2-history-detail-item-copy">Qty ${escapeHtml(String(row.quantity || 0))} • Unit ${escapeHtml(formatCurrency(row.unitPrice, row.currency))} • Total ${escapeHtml(formatCurrency(row.totalPrice, row.currency))}</div>
                         </div>
                     `).join("")}
@@ -3555,7 +4667,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                             <div class="qc2-head-copy">
                                 <div class="upload-step">Step 4</div>
                                 <h2 class="qc2-title">Product history</h2>
-                                <p class="qc2-copy">Filter saved supplier offers by product, supplier, and date to review how visible prices changed over time.</p>
+                                <p class="qc2-copy">Filter saved supplier price records by product, supplier, and date to review how visible prices changed over time.</p>
                             </div>
                         </div>
                     </div>
@@ -3569,7 +4681,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                         <div class="mapping-section-head">
                             <div>
                                 <div class="mapping-section-title">Price history table</div>
-                                <div class="mapping-section-copy">Review each saved supplier quote, including change versus the previous visible quote.</div>
+                                <div class="mapping-section-copy">Review each saved supplier price record, including change versus the previous visible record.</div>
                             </div>
                         </div>
                         <div data-qc-history-table-content>${renderHistoryTable(state, viewModel.tableRows, { hasHistoryContext: viewModel.hasHistoryContext })}</div>
@@ -3588,27 +4700,41 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
         `;
     }
 
+    function renderCurrentScreen(state) {
+        switch (state.currentScreen) {
+            case "upload":
+                return renderQcUpload(state);
+            case "manual":
+                return renderQcManual(state);
+            case "review":
+                return renderQcReview(state);
+            case "analyze":
+                return renderQcAnalyze(state);
+            case "history":
+                return renderQcHistory(state);
+            case "start":
+            default:
+                return renderQcStart(state);
+        }
+    }
+
     function renderApp(elements, state, options = {}) {
         const renderStartedAt = performance.now();
         const preserveScrollTop = options.preserveScroll ? readScrollPosition(elements) : null;
         const anchorSelector = options.anchorSelector || "";
         const anchorOffset = anchorSelector ? getAnchorOffset(elements, anchorSelector) : null;
         if (!elements.app) return;
-        const screenMap = {
-            start: renderQcStart(state),
-            upload: renderQcUpload(state),
-            manual: renderQcManual(state),
-            review: renderQcReview(state),
-            analyze: renderQcAnalyze(state),
-            history: renderQcHistory(state)
-        };
-        elements.app.innerHTML = screenMap[state.currentScreen] || renderQcStart(state);
-        applyAnalysisTableFilter(elements, state);
+        elements.app.innerHTML = renderCurrentScreen(state);
+        if (state.currentScreen === "analyze") {
+            applyAnalysisTableFilter(elements, state);
+        }
         if (preserveScrollTop != null) {
             writeScrollPosition(elements, preserveScrollTop);
         }
         restoreAnchorOffset(elements, anchorSelector, anchorOffset);
-        scheduleHistoryDetailChartRender(elements, state);
+        if (state.currentScreen === "history") {
+            scheduleHistoryDetailChartRender(elements, state);
+        }
         persistQuoteCompareSession(state, elements);
         console.info("[quote compare render timing]", {
             screen: state.currentScreen,
@@ -3616,9 +4742,28 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
         });
     }
 
+    function scheduleAnalysisTableFilter(elements, state) {
+        window.clearTimeout(state.analysisFilterTimer);
+        state.analysisFilterTimer = window.setTimeout(() => {
+            state.analysisFilterTimer = null;
+            applyAnalysisTableFilter(elements, state);
+            persistQuoteCompareSession(state, elements);
+        }, 120);
+    }
+
+    function scheduleHistoryViewRefresh(elements, state) {
+        if (state.historyRefreshFrame) {
+            cancelAnimationFrame(state.historyRefreshFrame);
+        }
+        state.historyRefreshFrame = requestAnimationFrame(() => {
+            state.historyRefreshFrame = 0;
+            refreshHistoryView(elements, state);
+        });
+    }
+
     function applyAnalysisTableFilter(elements, state) {
         if (!elements.app) return;
-        const activeFilter = state.analysisTableFilter || "all";
+        const activeFilter = normalizeAnalysisTableFilter(state.analysisTableFilter);
         const searchTerm = String(state.analysisTableSearch || "").trim().toLowerCase();
         const rows = Array.from(elements.app.querySelectorAll("[data-qc-analysis-row]"));
         const table = rows[0]?.parentElement || null;
@@ -3746,7 +4891,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             }
         }
         state.isSubmitting = true;
-        setStatus(state, "Building quote analysis from the confirmed mappings.", "info");
+        setStatus(state, "Building pricing analysis from the confirmed mappings.", "info");
         const formData = new FormData();
         if (state.file) {
             formData.append("file", state.file);
@@ -3779,7 +4924,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             state.currentScreen = "analyze";
             state.isSubmitting = false;
             await activateCurrentUploadScope(elements, state);
-            setStatus(state, data.message || "Quote analysis is ready.", "success");
+            setStatus(state, data.message || "Pricing analysis is ready.", "success");
             return true;
         } catch (error) {
             state.isSubmitting = false;
@@ -3797,8 +4942,27 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
 
     async function startManualAnalysis(state, elements) {
         try {
-            const payload = buildManualPayload(state);
-            setStatus(state, "Calculating quote analysis from the manual supplier rows.", "info");
+            computeValidation(state);
+            if (!state.validation.ready) {
+                setStatus(state, "Complete the required unique mappings before starting analysis.", "error");
+                state.isSubmitting = false;
+                return false;
+            }
+            const mappedRows = normalizeMappedManualRows(applySelectedMappingsToRows(state.rows, state.selectedMappings));
+            const importResult = buildQuoteBidImportResultFromRows(mappedRows);
+            if (!importResult.valid_row_count) {
+                throw new Error("Add at least one complete pricing row before starting analysis.");
+            }
+            const payload = {
+                upload_id: state.manualUploadId,
+                name: `Manual Pricing Analysis ${new Date().toLocaleDateString("en-US")}`,
+                sourcing_need: "",
+                source_type: "manual",
+                mode: "compare",
+                bids: importResult.bids,
+                weighting: null
+            };
+            setStatus(state, "Calculating pricing analysis from the manual pricing rows.", "info");
             const data = await fetchJson("/quote-compare/evaluate", {
                 method: "POST",
                 body: JSON.stringify(payload)
@@ -3810,25 +4974,23 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 summary: buildAnalyzeSummary({ comparison: { ...data.comparison, source_type: "manual" } })
             };
             state.manualUploadId = data.comparison?.upload_id || state.manualUploadId;
-            state.selectedMappings = {
-                "Product Name": "Manual Entry",
-                "Supplier": "Manual Entry",
-                "Unit": "Manual Entry",
-                "Quantity": "Manual Entry",
-                "Unit Price": "Manual Entry",
-                "Date": "Manual Entry"
-            };
+            state.rows = importResult.bids;
             state.activeAnalyzeTab = "savings";
             state.showOpportunitySection = true;
             state.showFullComparison = false;
             state.collapsedDecisionCards = clearDecisionCardsForScope(state.collapsedDecisionCards, "spotlight");
-            state.lastFlowScreen = "manual";
+            state.lastFlowScreen = "review";
             state.currentScreen = "analyze";
             await activateCurrentUploadScope(elements, state);
-            setStatus(state, "Manual quote analysis is ready.", "success");
+            const skippedMessage = importResult.skipped_row_count
+                ? ` ${importResult.skipped_row_count} incomplete rows were skipped.`
+                : "";
+            setStatus(state, `Manual pricing analysis is ready.${skippedMessage}`, "success");
+            state.isSubmitting = false;
             return true;
         } catch (error) {
             setStatus(state, error.message, "error");
+            state.isSubmitting = false;
             return false;
         }
     }
@@ -3936,6 +5098,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             const action = actionTarget.dataset.qcAction;
 
             if (action === "start-upload") {
+                closeProductSummary(state);
                 state.mode = "upload";
                 state.currentScreen = "upload";
                 setStatus(state, "", "");
@@ -3943,6 +5106,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 return;
             }
             if (action === "start-manual") {
+                closeProductSummary(state);
                 state.mode = "manual";
                 state.currentScreen = "manual";
                 setStatus(state, "", "");
@@ -3950,6 +5114,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 return;
             }
             if (action === "back-start") {
+                closeProductSummary(state);
                 state.currentScreen = "start";
                 setStatus(state, "", "");
                 renderApp(elements, state);
@@ -3965,29 +5130,32 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 return;
             }
             if (action === "go-review") {
+                closeProductSummary(state);
                 state.currentScreen = "review";
                 renderApp(elements, state);
                 return;
             }
             if (action === "back-upload") {
+                closeProductSummary(state);
                 state.currentScreen = "upload";
-                renderApp(elements, state);
-                return;
-            }
-            if (action === "auto-map") {
-                applyAutoMappings(state);
-                setStatus(state, "Confident detected columns were applied automatically.", "info");
                 renderApp(elements, state);
                 return;
             }
             if (action === "clear-mappings") {
                 clearMappings(state);
                 setStatus(state, "All mapping selections were cleared.", "info");
-                renderApp(elements, state);
+                renderApp(elements, state, { preserveScroll: true });
                 return;
             }
             if (action === "start-analysis") {
-                const started = await startUploadAnalysis(state, elements);
+                if (state.isSubmitting) return;
+                state.isSubmitting = true;
+                setStatus(state, "Starting analysis...", "info");
+                renderApp(elements, state, { preserveScroll: true });
+                await waitForNextPaint();
+                const started = state.mode === "manual"
+                    ? await startManualAnalysis(state, elements)
+                    : await startUploadAnalysis(state, elements);
                 renderApp(elements, state);
                 if (started) {
                     writeScrollPosition(elements, 0);
@@ -3995,6 +5163,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 return;
             }
             if (action === "back-review") {
+                closeProductSummary(state);
                 if (state.currentScreen === "review" && state.mode === "manual") {
                     state.currentScreen = "manual";
                 } else {
@@ -4009,32 +5178,31 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 return;
             }
             if (action === "remove-manual-row") {
+                const manualEntryScrollLeft = getManualEntryScroller(elements)?.scrollLeft || 0;
                 const index = Number(actionTarget.dataset.index || -1);
                 if (index > 0) state.manualRows.splice(index, 1);
-                renderApp(elements, state);
+                renderApp(elements, state, { preserveScroll: true });
+                restoreManualEntryScrollLeft(elements, manualEntryScrollLeft);
                 return;
             }
             if (action === "go-manual-review") {
-                const validation = getManualValidation(state);
-                if (!validation.completeCount) {
-                    setStatus(state, "Add at least one complete supplier row before continuing to review.", "error");
-                    renderApp(elements, state);
-                    return;
+                try {
+                    prepareManualDraftForReview(state);
+                    state.lastFlowScreen = "manual";
+                    state.currentScreen = "review";
+                    setStatus(state, "Manual rows are ready for review.", "info");
+                } catch (error) {
+                    setStatus(state, error.message, "error");
                 }
-                if (!validation.ready) {
-                    setStatus(state, "Complete the missing required fields before continuing to review.", "error");
-                    renderApp(elements, state);
-                    return;
-                }
-                state.lastFlowScreen = "manual";
-                state.currentScreen = "review";
-                setStatus(state, "Manual rows are ready for review.", "info");
                 renderApp(elements, state);
                 return;
             }
-            if (action === "manual-analyze") {
-                await startManualAnalysis(state, elements);
-                renderApp(elements, state);
+            if (action === "open-product-summary") {
+                const productName = actionTarget.dataset.productName || "";
+                const productUnit = actionTarget.dataset.productUnit || "";
+                if (openProductSummary(state, productName, productUnit)) {
+                    renderApp(elements, state, { preserveScroll: true });
+                }
                 return;
             }
             if (action === "toggle-decision-card") {
@@ -4113,6 +5281,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 return;
             }
             if (action === "go-history") {
+                closeProductSummary(state);
                 rememberFullComparisonTablePosition(elements, state);
                 state.previousAnalyzeTab = state.activeAnalyzeTab || "savings";
                 initializeHistoryFilters(state);
@@ -4136,7 +5305,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 rememberFullComparisonTablePosition(elements, state);
                 state.previousAnalyzeTab = state.activeAnalyzeTab || "full-table";
                 initializeHistoryFilters(state);
-                setStatus(state, `Opening offer history for ${productName}.`, "info");
+                setStatus(state, `Opening price history for ${productName}.`, "info");
                 await ensureHistoryComparisonsLoaded(state);
                 focusHistoryOnProductSeries(state, productName, productUnit);
                 state.currentScreen = "history";
@@ -4162,6 +5331,12 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
 
         elements.app.addEventListener("click", (event) => {
             setFullComparisonTableActiveState(elements, Boolean(event.target.closest(".qc2-analysis-table-frame")));
+            const productSummaryClose = event.target.closest("[data-qc-product-summary-close]");
+            if (productSummaryClose) {
+                closeProductSummary(state);
+                renderApp(elements, state, { preserveScroll: true });
+                return;
+            }
             const selectedAnalysisRow = event.target.closest("[data-qc-analysis-card-key]");
             if (selectedAnalysisRow) {
                 selectFullComparisonRow(elements, state, selectedAnalysisRow.dataset.qcAnalysisCardKey || "");
@@ -4175,7 +5350,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                     syncHistoryFilterDefaults(state);
                     clearHistorySelectedSeries(state);
                     closeHistoryDetailModal(state);
-                    refreshHistoryView(elements, state);
+                    scheduleHistoryViewRefresh(elements, state);
                 }
                 return;
             }
@@ -4202,7 +5377,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 applyHistoryFilterValue(state, key, historyOption.dataset.value || "");
                 clearHistorySelectedSeries(state);
                 closeHistoryDetailModal(state);
-                refreshHistoryView(elements, state);
+                scheduleHistoryViewRefresh(elements, state);
                 return;
             }
 
@@ -4213,7 +5388,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                     return;
                 }
                 cycleHistorySort(state, historySortHeader.dataset.qcHistorySortKey || "");
-                refreshHistoryView(elements, state);
+                scheduleHistoryViewRefresh(elements, state);
                 return;
             }
 
@@ -4295,7 +5470,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             if (mappingSelect) {
                 state.selectedMappings[mappingSelect.dataset.qcMappingField] = mappingSelect.value || "";
                 computeValidation(state);
-                renderApp(elements, state);
+                renderApp(elements, state, { preserveScroll: true });
                 return;
             }
 
@@ -4306,7 +5481,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 syncHistoryFilterDefaults(state);
                 clearHistorySelectedSeries(state);
                 closeHistoryDetailModal(state);
-                refreshHistoryView(elements, state);
+                scheduleHistoryViewRefresh(elements, state);
                 return;
             }
 
@@ -4317,7 +5492,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                     historyColumnCheckbox.dataset.qcHistoryColumnToggle,
                     historyColumnCheckbox.checked
                 );
-                refreshHistoryView(elements, state);
+                scheduleHistoryViewRefresh(elements, state);
                 return;
             }
 
@@ -4329,6 +5504,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                     state.manualRows[index][field] = manualField.value;
                 }
                 persistQuoteCompareSession(state, elements);
+                refreshManualDraftUi(elements, state, index);
             }
         });
 
@@ -4343,8 +5519,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             const searchInput = event.target.closest("[data-qc-analysis-search]");
             if (searchInput) {
                 state.analysisTableSearch = searchInput.value || "";
-                applyAnalysisTableFilter(elements, state);
-                persistQuoteCompareSession(state, elements);
+                scheduleAnalysisTableFilter(elements, state);
                 return;
             }
             const manualField = event.target.closest("[data-manual-field]");
@@ -4355,9 +5530,15 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 state.manualRows[index][field] = manualField.value;
             }
             persistQuoteCompareSession(state, elements);
+            refreshManualDraftUi(elements, state, index);
         });
 
         elements.app.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && state.productSummaryModalOpen) {
+                closeProductSummary(state);
+                renderApp(elements, state, { preserveScroll: true });
+                return;
+            }
             if (event.key === "Escape" && state.historyDetailModalOpen) {
                 const previousScrollTop = readScrollPosition(elements);
                 const previousTableScrollTop = getHistoryTableScroller(elements)?.scrollTop || 0;
@@ -4371,7 +5552,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             if (historySortHeader && (event.key === "Enter" || event.key === " ")) {
                 event.preventDefault();
                 cycleHistorySort(state, historySortHeader.dataset.qcHistorySortKey || "");
-                refreshHistoryView(elements, state);
+                scheduleHistoryViewRefresh(elements, state);
                 return;
             }
 
@@ -4415,7 +5596,9 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                     firstVisibleOption.dataset.qcHistoryFilterOption,
                     firstVisibleOption.dataset.value || ""
                 );
-                renderApp(elements, state);
+                clearHistorySelectedSeries(state);
+                closeHistoryDetailModal(state);
+                scheduleHistoryViewRefresh(elements, state);
             }
         });
 
@@ -4446,7 +5629,7 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
             const targetKey = historyHeader.dataset.qcHistoryColumnKey || "";
             if (moveHistoryColumn(state, draggedKey, targetKey)) {
                 state.historyDrag = { key: "", suppressClick: true };
-                refreshHistoryView(elements, state);
+                scheduleHistoryViewRefresh(elements, state);
                 return;
             }
             state.historyDrag = { key: "", suppressClick: false };
@@ -4515,7 +5698,15 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
                 renderApp(elements, state);
             },
             continueManualReview() {
-                startManualAnalysis(state, elements).then(() => renderApp(elements, state));
+                try {
+                    prepareManualDraftForReview(state);
+                    state.lastFlowScreen = "manual";
+                    state.currentScreen = "review";
+                    renderApp(elements, state);
+                } catch (error) {
+                    setStatus(state, error.message, "error");
+                    renderApp(elements, state);
+                }
             },
             goToStart() {
                 state.currentScreen = "start";
@@ -4620,3 +5811,4 @@ function filterHistoryComboboxOptions(combobox, searchTerm) {
         initQuoteCompare();
     }
 })();
+
